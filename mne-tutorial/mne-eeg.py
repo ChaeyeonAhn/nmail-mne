@@ -28,4 +28,32 @@ def import_EEG(file_name):
     return EEG_array, label_array
 
 def EEG_array_modifier(eeg_array, label_array):
-    
+    X = []
+    y = []
+    event_timepoints = []
+
+    for (i, label) in enumerate(label_array):
+        X.append(np.array(eeg_array[i])) # 2D ndarray 변환하여 삽입
+        y.append(label) # 라벨 삽입
+        event_timepoints.append(i) # 그냥 숫자 삽입. 결과적으로 0 1 2 3 4 ... 될 것
+    events_array = np.array([[event_timepoints[i], 0, y[i]] for i in range(len(y))])
+    return np.array(X), events_array
+
+def EEG_to_epochs(eeg_array, label_array, sfreq = 500, event_id = {'Rest': 0, 'Right Hand': 1, 'Left Hand': 2, 'Feet': 3}):
+    # 우리가 꽂아서 사용한 채널(전극) 이름
+    channels = ['F5', 'FC5', 'C5', 'CP5', 'P5', 'FC3', 'C3', 'CP3', 'P3', 'F1', 'FC1', 'C1', 'CP1', 'P1', 'Cz', 'CPz', 'Pz', 'F2', 'FC2', 'C2', 'CP2', 'P2', 'FC4', 'C4', 'CP4', 'P4', 'F6', 'FC6', 'C6', 'CP6', 'P6']
+    n_channels = len(channels)
+    ch_types = ['eeg'] * n_channels
+    # montage란, EEG 전극 이름과 두피 위의 센서의 상대적 위치를 나타낸다.
+    # standard 1020은 정해진 하나의 규격 느낌인 듯 (?) 센서 위치 규격
+    # 내장 EEG montage를 로드하는 것
+    montage = mne.channels.make_standard_montage('standard_1020')
+    info = mne.create_info(ch_names=channels, sfreq=sfreq, ch_types=ch_types)
+    info = info.set_montage(montage) # 설정한 montage 사용
+    # 여기 피드 되는 두 개 array는 import_EEG에서 나온 친구들
+    data, events = EEG_array_modifier(eeg_array, label_array)
+    epochs = mne.EpochsArray(data, info, events, tmin=0, event_id=event_id)
+    return epochs
+
+EEG_array, label_array = import_EEG('./[CYA]MI_four_1.txt')
+new_epoch = EEG_to_epochs(EEG_array, label_array)
