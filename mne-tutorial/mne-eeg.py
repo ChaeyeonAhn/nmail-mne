@@ -2,6 +2,7 @@ import numpy as np
 import mne
 import json
 import matplotlib.pyplot as plt
+import os
 
 def import_EEG(file_name):
     f = open(file_name, 'r') # 받은 파일 읽어들이기
@@ -55,5 +56,8 @@ def EEG_to_epochs(eeg_array, label_array, sfreq = 500, event_id = {'Rest': 0, 'R
     epochs = mne.EpochsArray(data, info, events, tmin=0, event_id=event_id)
     return epochs
 
-EEG_array, label_array = import_EEG('./[CYA]MI_four_1.txt')
+EEG_array, label_array = import_EEG('[CYA]MI_four_1.txt')
 new_epoch = EEG_to_epochs(EEG_array, label_array)
+new_epoch.plot
+
+# print(os.getcwd())
