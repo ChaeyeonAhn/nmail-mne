@@ -23,7 +23,7 @@ def import_EEG(file_name):
             data = np.float64(data)
             EEG_array.append(data)
     
-    EEG_array = np.array(EEG_array) # epoch * timestamp * channel 형태의 3D array 생성
+    EEG_array = np.array(EEG_array) * 1e-9 # epoch * timestamp * channel 형태의 3D array 생성
     label_array = np.array(label_array) # 0, 1, 2, 3 어떤 상상을 하는 지 나타내는 숫자들
     EEG_array = np.transpose(EEG_array, (0, 2, 1)) # epoch * channel * timestamp (EpochArray 형식 맞추려고)
     return EEG_array, label_array
@@ -56,8 +56,16 @@ def EEG_to_epochs(eeg_array, label_array, sfreq = 500, event_id = {'Rest': 0, 'R
     epochs = mne.EpochsArray(data, info, events, tmin=0, event_id=event_id)
     return epochs
 
+# print(os.getcwd())
+
 EEG_array, label_array = import_EEG('[CYA]MI_four_1.txt')
 new_epoch = EEG_to_epochs(EEG_array, label_array)
-new_epoch.plot
+# modified_EEG, event = EEG_array_modifier(EEG_array, label_array)
 
-# print(os.getcwd())
+new_epoch['Rest', 'Right Hand', 'Left Hand'].plot(n_epochs=10, show=True)
+plt.show()
+
+print("EEG_array shape:", EEG_array.shape)
+print("Label array shape:", label_array.shape)
+print("First few labels:", label_array[:10])
+print("First EEG epoch (first few samples):", EEG_array[0, :, :10])
