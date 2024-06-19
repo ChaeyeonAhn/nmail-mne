@@ -1,5 +1,6 @@
 import numpy as np
 import mne
+from mne.preprocessing import ICA, corrmap, create_ecg_epochs, create_eog_epochs
 import json
 import matplotlib.pyplot as plt
 import os
@@ -58,25 +59,117 @@ def EEG_to_epochs(eeg_array, label_array, sfreq = 500, event_id = {'Rest': 0, 'R
 
 # print(os.getcwd())
 
-EEG_array, label_array = import_EEG('[CYA]MI_four_1.txt')
-new_epoch = EEG_to_epochs(EEG_array, label_array)
-fig = new_epoch.plot(n_epochs=1, show=True, n_channels=32)
+EEG_array, label_array = import_EEG('[CYA]MI_four_1.txt') # 파일 읽어들이기
+new_epoch = EEG_to_epochs(EEG_array, label_array) # 에폭 어레이 형성
+# fig = new_epoch.plot(n_epochs=1, show=True, n_channels=32) # 기본적인 EEG 데이터 열람
 
-print("First few labels:", label_array[:10])
-print("First EEG epoch (first few samples):", EEG_array[0, :, :10])
+# print("First few labels:", label_array[:10])
+# print("First EEG epoch (first few samples):", EEG_array[0, :, :10])
 
+
+##### 1. 필터링하기 #####
 cutoff = 2
 highpass = new_epoch.copy().filter(l_freq=cutoff, h_freq=None)
 with mne.viz.use_browser_backend("matplotlib"):
     fig = highpass.plot(n_channels=32, n_epochs=1)
 fig.subplots_adjust(top=0.9)
 fig.suptitle(f"High-pass filtered at {cutoff} Hz", size="xx-large", weight="bold")
-plt.show()
 
 # ## 필터 양상 보기 ##
 # filter_params = mne.filter.create_filter(
 #     new_epoch.get_data(), new_epoch.info["sfreq"], l_freq=1, h_freq=None
 # )
-
 # mne.viz.plot_filter(filter_params, new_epoch.info["sfreq"], flim=(0.01, 5))
 # plt.show()
+
+## spectrum 그래프에 60Hz의 하모닉스에 표시해줌
+# def add_arrows(axes):
+#     for ax in axes:
+#         freqs = ax.lines[-1].get_xdata()
+#         psds = ax.lines[-1].get_ydata()
+#         for freq in (60, 120, 180, 240):
+#             idx = np.searchsorted(freqs, freq)
+#             # get ymax of a small region around the freq. of interest
+#             y = psds[(idx - 4) : (idx + 5)].max()
+#             ax.arrow(
+#                 x=freqs[idx],
+#                 y=y + 18,
+#                 dx=0,
+#                 dy=-12,
+#                 color="red",
+#                 width=0.1,
+#                 head_width=3,
+#                 length_includes_head=True,
+#             )
+
+##### 2. 푸리에 변환 통해서, 내 에폭 안의 데이터들의 fq vs V spectrum 표시 #####
+# compute_psd returns EpochSpectrum
+# average : averages over channels
+# amplitude : False thus Power spectrum (Amplitude spectrum if True)
+fig = new_epoch.compute_psd(fmax=250, method="welch", n_fft=4096).plot(
+    average=True, amplitude=False, exclude="bads"
+)
+
+# epoch array data에 노치 필터를 적용하고 싶은데 지원하지 않는다고 한다.
+# raw 에 적용한 거 보니까 60 헤르츠 하모닉스에서 파워가 확 감소하는 방향으로 수정됨
+# freqs = (60, 120, 180, 240)
+# notch = new_epoch.copy().notch_filter(freqs=freqs)
+# fig = notch.compute_psd(fmax=250).plot(
+#     average=True, amplitude=False, exclude="bads"
+# )
+# fig.suptitle(f"Notch filtered", size="xx-large", weight="bold")
+
+##### 3. 샘플링 레이트를 줄이고, ALIASING 방지하여 나타내기 #####
+downsampled = new_epoch.copy().resample(sfreq=200) # sampling rate 500 -> 200
+
+n_ffts = [4096, int(round(4096 * 200 / new_epoch.info["sfreq"]))]
+fig, axes = plt.subplots(2, 1, sharey=True, layout="constrained", figsize=(10, 6))
+for ax, data, title, n_fft in zip(
+    axes, [new_epoch, downsampled], ["Original", "Downsampled"], n_ffts
+):
+    fig = data.compute_psd(method="welch", n_fft=n_fft).plot(
+        average=True, amplitude=False, picks="data", exclude="bads", axes=ax
+    )
+    ax.set(title=title, xlim=(0, 300))
+
+##### 4. Artifact removal #####
+# Checking artifacts
+channels = ['F5', 'FC5', 'C5', 'CP5', 'P5', 'FC3', 'C3', 'CP3', 'P3', 'F1', 'FC1', 'C1', 'CP1', 'P1', 'Cz', 
+            'CPz', 'Pz', 'F2', 'FC2', 'C2', 'CP2', 'P2', 'FC4', 'C4', 'CP4', 'P4', 'F6', 'FC6', 'C6', 'CP6', 'P6']
+
+artifact_picks = mne.pick_channels_regexp(channels, regexp='') # 그냥 채널들 다 고른다는 뜻이 되어 버림
+# new_epoch.plot(order=artifact_picks, n_channels=len(artifact_picks), show_scrollbars=False)
+
+# High pass filtering and ICA
+filt_epoch = new_epoch.copy().filter(l_freq=1.0, h_freq=None)
+ica = ICA(n_components=15, max_iter="auto", random_state=97) # ICA 객체 초기화 및 생성
+ica.fit(filt_epoch) # 필터링 된 데이터를 ICA 모델에 피팅시켜서 독립 성분들을 분리해낸다.
+ica
+
+# 추출된 독립 성분들이 원본 데이터의 '변동성'을 얼마나 잘 설명하는지
+# 각 성분이 이 데이터에서 얼마나 중요한지
+# 중요도가 높다는 것은 artifact일 확률이 낮다는 것
+# 채널 타입이 EEG로 하나기 때문에, EEG에 대한 것만 출력되고, 기여도가 99%로 매우 높음
+explained_var_ratio = ica.get_explained_variance_ratio(filt_epoch)
+for channel_type, ratio in explained_var_ratio.items():
+    print(
+        f"Fraction of {channel_type} variance explained by all components: " f"{ratio}"
+    )
+
+# 분리된 독립 성분들 나란히 나타내주기
+# ica.plot_sources(new_epoch, show_scrollbars=False)
+
+# 이 플롯이 각각의 독립 성분의 특성을 다양하게 나타내주므로, 여기서 어떤 것이 노이즈인지를 파악한다. 
+# ica.plot_properties(new_epoch, picks=[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14])
+
+# 어떤 독립 성분을 뺄지 정했으면, ica에 빼는 것으로 등록함
+ica.exclude = [0, 2, 3, 4, 5, 6, 7, 8, 9, 12]
+reconst_epoch = new_epoch.copy()
+ica.apply(reconst_epoch)
+
+new_epoch.plot(order=artifact_picks, n_channels=len(artifact_picks), show_scrollbars=False)
+reconst_epoch.plot(
+    order=artifact_picks, n_channels=len(artifact_picks), show_scrollbars=False
+)
+del reconst_epoch
+plt.show()
