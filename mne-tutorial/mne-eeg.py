@@ -23,7 +23,7 @@ def import_EEG(file_name):
             data = np.float64(data)
             EEG_array.append(data)
     
-    EEG_array = np.array(EEG_array) * 1e-9 # epoch * timestamp * channel 형태의 3D array 생성
+    EEG_array = np.array(EEG_array) * 0.000000016 # epoch * timestamp * channel 형태의 3D array 생성
     label_array = np.array(label_array) # 0, 1, 2, 3 어떤 상상을 하는 지 나타내는 숫자들
     EEG_array = np.transpose(EEG_array, (0, 2, 1)) # epoch * channel * timestamp (EpochArray 형식 맞추려고)
     return EEG_array, label_array
@@ -40,7 +40,7 @@ def EEG_array_modifier(eeg_array, label_array):
     events_array = np.array([[event_timepoints[i], 0, y[i]] for i in range(len(y))])
     return np.array(X), events_array
 
-def EEG_to_epochs(eeg_array, label_array, sfreq = 500, event_id = {'Rest': 0, 'Right Hand': 1, 'Left Hand': 2, 'Feet': 3}):
+def EEG_to_epochs(eeg_array, label_array, sfreq = 500, event_id = {'Rest': 0, 'RightHand': 1, 'LeftHand': 2, 'Feet': 3}):
     # 우리가 꽂아서 사용한 채널(전극) 이름
     channels = ['F5', 'FC5', 'C5', 'CP5', 'P5', 'FC3', 'C3', 'CP3', 'P3', 'F1', 'FC1', 'C1', 'CP1', 'P1', 'Cz', 'CPz', 'Pz', 'F2', 'FC2', 'C2', 'CP2', 'P2', 'FC4', 'C4', 'CP4', 'P4', 'F6', 'FC6', 'C6', 'CP6', 'P6']
     n_channels = len(channels)
@@ -60,12 +60,23 @@ def EEG_to_epochs(eeg_array, label_array, sfreq = 500, event_id = {'Rest': 0, 'R
 
 EEG_array, label_array = import_EEG('[CYA]MI_four_1.txt')
 new_epoch = EEG_to_epochs(EEG_array, label_array)
-# modified_EEG, event = EEG_array_modifier(EEG_array, label_array)
+fig = new_epoch.plot(n_epochs=1, show=True, n_channels=32)
 
-new_epoch['Rest', 'Right Hand', 'Left Hand'].plot(n_epochs=10, show=True)
-plt.show()
-
-print("EEG_array shape:", EEG_array.shape)
-print("Label array shape:", label_array.shape)
 print("First few labels:", label_array[:10])
 print("First EEG epoch (first few samples):", EEG_array[0, :, :10])
+
+cutoff = 2
+highpass = new_epoch.copy().filter(l_freq=cutoff, h_freq=None)
+with mne.viz.use_browser_backend("matplotlib"):
+    fig = highpass.plot(n_channels=32, n_epochs=1)
+fig.subplots_adjust(top=0.9)
+fig.suptitle(f"High-pass filtered at {cutoff} Hz", size="xx-large", weight="bold")
+plt.show()
+
+# ## 필터 양상 보기 ##
+# filter_params = mne.filter.create_filter(
+#     new_epoch.get_data(), new_epoch.info["sfreq"], l_freq=1, h_freq=None
+# )
+
+# mne.viz.plot_filter(filter_params, new_epoch.info["sfreq"], flim=(0.01, 5))
+# plt.show()
