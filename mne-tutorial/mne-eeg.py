@@ -1,6 +1,18 @@
 import numpy as np
 import mne
 from mne.preprocessing import ICA, corrmap, create_ecg_epochs, create_eog_epochs
+
+from sklearn.discriminant_analysis import LinearDiscriminantAnalysis
+from sklearn.preprocessing import StandardScaler
+from sklearn.model_selection import ShuffleSplit, cross_val_score
+from sklearn.pipeline import Pipeline
+from mne import Epochs, pick_types
+from mne.channels import make_standard_montage
+from mne.datasets import eegbci
+from mne.decoding import CSP
+from sklearn.svm import SVC
+from mne.io import concatenate_raws, read_raw_edf
+
 import json
 import matplotlib.pyplot as plt
 import os
@@ -61,7 +73,8 @@ def EEG_to_epochs(eeg_array, label_array, sfreq = 500, event_id = {'Rest': 0, 'R
 
 EEG_array, label_array = import_EEG('[CYA]MI_four_1.txt') # 파일 읽어들이기
 new_epoch = EEG_to_epochs(EEG_array, label_array) # 에폭 어레이 형성
-# fig = new_epoch.plot(n_epochs=1, show=True, n_channels=32) # 기본적인 EEG 데이터 열람
+fig = new_epoch.plot(n_epochs=1, show=True, n_channels=32, event_color=dict({-1: "blue", 1: "red", 2: "yellow", 3: "green"})) # 기본적인 EEG 데이터 열람
+# 이벤트별로 온셋 타이밍 색깔로 보고 싶은데 코드가 적용이 안 되나 봄
 
 # print("First few labels:", label_array[:10])
 # print("First EEG epoch (first few samples):", EEG_array[0, :, :10])
@@ -147,8 +160,7 @@ ica.fit(filt_epoch) # 필터링 된 데이터를 ICA 모델에 피팅시켜서 �
 ica
 
 # 추출된 독립 성분들이 원본 데이터의 '변동성'을 얼마나 잘 설명하는지
-# 각 성분이 이 데이터에서 얼마나 중요한지
-# 중요도가 높다는 것은 artifact일 확률이 낮다는 것
+# 각 성분이 이 데이터에서 얼마나 중요한지, 중요도가 높다는 것은 artifact일 확률이 낮다는 것 (notion)
 # 채널 타입이 EEG로 하나기 때문에, EEG에 대한 것만 출력되고, 기여도가 99%로 매우 높음
 explained_var_ratio = ica.get_explained_variance_ratio(filt_epoch)
 for channel_type, ratio in explained_var_ratio.items():
@@ -163,7 +175,9 @@ for channel_type, ratio in explained_var_ratio.items():
 # ica.plot_properties(new_epoch, picks=[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14])
 
 # 어떤 독립 성분을 뺄지 정했으면, ica에 빼는 것으로 등록함
-ica.exclude = [0, 2, 3, 4, 5, 6, 7, 8, 9, 12]
+ica.exclude = [0, 4, 5, 6, 8, 12]
+
+ # ica apply를 하면 신호가 아예 바뀌어서 copy
 reconst_epoch = new_epoch.copy()
 ica.apply(reconst_epoch)
 
@@ -171,5 +185,101 @@ new_epoch.plot(order=artifact_picks, n_channels=len(artifact_picks), show_scroll
 reconst_epoch.plot(
     order=artifact_picks, n_channels=len(artifact_picks), show_scrollbars=False
 )
-del reconst_epoch
+# del reconst_epoch
+
+## 이왕 ICA로 전처리 해본 김에 이걸로 특징 추출 해보자!
+## 이제부터는 CSP를 이용하여 decoding
+## 아래는 훈련용 데이터를 만들고 (그냥 시간 기준으로 자름), numpy 배열 객체로 뽑기
+reconst_epoch_train = reconst_epoch.copy().crop(tmin=1.0, tmax=2.0)
+reconst_epoch_data = reconst_epoch.get_data(copy=False)
+reconst_epoch_tdata = reconst_epoch_train.get_data(copy=False)
+
+# 오히려 ICA 안 한 애들로 학습한 것이 정확도가 0.02 더 높다 큰 차이는 아니지만...!
+new_epoch_train = new_epoch.copy().crop(tmin=1.0, tmax=2.0)
+new_epoch_data = new_epoch.get_data(copy=False)
+new_epoch_tdata = new_epoch_train.get_data(copy=False)
+
+# 내가 데이터를 어떻게 쪼개서 교차 검증에 쓸 건지
+# 10개로 쪼갤 거고, 테스트 셋은 20%, 나머지는 훈련용 데이터
+cv = ShuffleSplit(10, test_size=0.2, random_state=42)
+cv_split = cv.split(reconst_epoch_tdata)
+cv_split = cv.split(new_epoch_tdata)
+
+# LDA 구성
+# LDA는 주어진 데이터의 각 클래스 간에 제일 큰 분리가 일어나도록 그 분류하는 '직선'을 찾는 알고리즘
+lda = LinearDiscriminantAnalysis()
+csp = CSP(n_components=15, reg=None, log=True, norm_trace=False)
+scaler = StandardScaler()
+
+# CSP와 LDA를 함께 하도록 도와주는 파이프라인, 참고로 SVM 써서 비선형 -> 정확도 더 떨어짐
+# 스케일러 써도 크게 안 달라짐
+clf = Pipeline([
+    ("CSP", csp), 
+    ("Scaler", scaler),
+    ("LDA", lda)])
+
+# 교차 검증을 통해서 내가 만든 분류 모델의 점수를 배열에 저장하여 반환
+# 여기서 쓰는 CSP는 모델의 성능을 평가하기 위함
+# 여기는 데이터 fragment를 가지고 함
+scores1 = cross_val_score(clf, reconst_epoch_tdata, label_array, cv=cv, n_jobs=None)
+scores2 = cross_val_score(clf, new_epoch_tdata, label_array, cv=cv, n_jobs=None)
+
+# 레이블 어레이에서 0번과 각 요소들이 똑같은 경우의 수를 계산하여 평균을 냄
+class_balance = np.mean(label_array == label_array[0])
+
+# 다수의 빈도수를 설정
+class_balance = max(class_balance, 1.0 - class_balance)
+
+# 얼마나 잘 검증하는지 / 기준 비율 (다수의 비율)
+print(f"****** Classification accuracy (w/ ICA): {np.mean(scores1)} / Chance level: {class_balance} ******")
+print(f"****** Classification accuracy (no ICA): {np.mean(scores2)} / Chance level: {class_balance} ******")
+
+
+# 전체 데이터에 대해서 CSP 학습! 여기서는 '진짜' 학습
+csp.fit_transform(reconst_epoch_data, label_array)
+csp.fit_transform(new_epoch_data, label_array)
+
+csp.plot_patterns(reconst_epoch.info, ch_type="eeg", units="Patterns (AU)", size=1.5)
+csp.plot_patterns(new_epoch.info, ch_type="eeg", units="Patterns (AU)", size=1.5)
+
+# # 시간에 따른 퍼포먼스 시각적 열람하기
+# sfreq = new_epoch.info["sfreq"] #500
+
+# # 슬라이딩 윈도우의 크기를 지정
+# # 슬라이딩 윈도우란, 데이터 위에 놓고 조금씩 움직여가며 분석을 수행할 때 쓰는 도구
+# # 순차적인 신호 변화나 국소적인 특징을 알아볼 때 유용하다.
+# w_length = int(sfreq * 0.5)  # running classifier: window length
+# w_step = int(sfreq * 0.1)  # running classifier: window step size
+# w_start = np.arange(0, new_epoch_data.shape[2] - w_length, w_step)
+
+# scores_windows = []
+
+# for train_idx, test_idx in cv_split: # 자세히는 모르겠지만 훈련 / 테스트 데이터로 나뉘어 있음
+#     y_train, y_test = label_array[train_idx], label_array[test_idx]
+
+#     X_train = csp.fit_transform(new_epoch_tdata[train_idx], y_train) # 얘는 훈련 데이터에 학습 후 학습된 모델 바탕으로 변환
+#     X_test = csp.transform(new_epoch_tdata[test_idx]) # 얘는 테스트 데이터에 앞전에 학습한 모델 가지고 변환만.
+
+#     # fit classifier
+#     lda.fit(X_train, y_train)
+
+#     # running classifier: test classifier on sliding window
+#     score_this_window = []
+#     for n in w_start:
+#         X_test = csp.transform(new_epoch_data[test_idx][:, :, n : (n + w_length)]) 
+#         score_this_window.append(lda.score(X_test, y_test))
+#     scores_windows.append(score_this_window)
+
+# # Plot scores over time
+# w_times = (w_start + w_length / 2.0) / sfreq + new_epoch.tmin
+
+# plt.figure()
+# plt.plot(w_times, np.mean(scores_windows, 0), label="Score")
+# plt.axvline(0, linestyle="--", color="k", label="Onset")
+# plt.axhline(0.5, linestyle="-", color="k", label="Chance")
+# plt.xlabel("time (s)")
+# plt.ylabel("classification accuracy")
+# plt.title("Classification score over time")
+# plt.legend(loc="lower right")
+# plt.show()
 plt.show()
