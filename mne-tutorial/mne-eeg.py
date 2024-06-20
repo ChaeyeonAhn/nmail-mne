@@ -11,6 +11,8 @@ from mne.channels import make_standard_montage
 from mne.datasets import eegbci
 from mne.decoding import CSP
 from sklearn.svm import SVC
+
+from scipy.signal import iirnotch, filtfilt
 from mne.io import concatenate_raws, read_raw_edf
 
 import json
@@ -69,20 +71,33 @@ def EEG_to_epochs(eeg_array, label_array, sfreq = 500, event_id = {'Rest': 0, 'R
     epochs = mne.EpochsArray(data, info, events, tmin=0, event_id=event_id)
     return epochs
 
+# Epoch Array에는 노치 필터 함수를 바로 적용 불가, 함수 구성
+def apply_notch_filter(data, sfreq, freq=60.0, quality_factor=30.0):
+
+    # 노치 필터의 주파수와 품질 인자 설정
+    # 60Hz는 전원선 노이즈
+    b, a = iirnotch(w0=freq, Q=quality_factor, fs=sfreq)
+    filtered_data = filtfilt(b, a, data, axis=-1)
+    return filtered_data
+
 # print(os.getcwd())
 
 EEG_array, label_array = import_EEG('[CYA]MI_four_1.txt') # 파일 읽어들이기
 new_epoch = EEG_to_epochs(EEG_array, label_array) # 에폭 어레이 형성
 fig = new_epoch.plot(n_epochs=1, show=True, n_channels=32, event_color=dict({-1: "blue", 1: "red", 2: "yellow", 3: "green"})) # 기본적인 EEG 데이터 열람
 # 이벤트별로 온셋 타이밍 색깔로 보고 싶은데 코드가 적용이 안 되나 봄
-
+data, events = EEG_array_modifier(EEG_array, label_array)
+fig = mne.viz.plot_events(
+    events, event_id={'Rest': 0, 'RightHand': 1, 'LeftHand': 2, 'Feet': 3}, sfreq=new_epoch.info["sfreq"]
+)
 # print("First few labels:", label_array[:10])
 # print("First EEG epoch (first few samples):", EEG_array[0, :, :10])
 
 
 ##### 1. 필터링하기 #####
 cutoff = 2
-highpass = new_epoch.copy().filter(l_freq=cutoff, h_freq=None)
+# highpass = new_epoch.copy().filter(l_freq=cutoff, h_freq=None)
+highpass = new_epoch.filter(l_freq=cutoff, h_freq=None)
 with mne.viz.use_browser_backend("matplotlib"):
     fig = highpass.plot(n_channels=32, n_epochs=1)
 fig.subplots_adjust(top=0.9)
@@ -125,17 +140,23 @@ fig = new_epoch.compute_psd(fmax=250, method="welch", n_fft=4096).plot(
 
 # epoch array data에 노치 필터를 적용하고 싶은데 지원하지 않는다고 한다.
 # raw 에 적용한 거 보니까 60 헤르츠 하모닉스에서 파워가 확 감소하는 방향으로 수정됨
-# freqs = (60, 120, 180, 240)
-# notch = new_epoch.copy().notch_filter(freqs=freqs)
-# fig = notch.compute_psd(fmax=250).plot(
-#     average=True, amplitude=False, exclude="bads"
-# )
-# fig.suptitle(f"Notch filtered", size="xx-large", weight="bold")
+
+notch_data = new_epoch.get_data()
+# 파라미터 차례대로 데이터 ndarray, 샘플링 주파수, 삭제할 주파수 영역, 품질 인자
+notch_filtered = apply_notch_filter(notch_data, 500, 60, 30)
+notch_filtered = apply_notch_filter(notch_filtered, 500, 120, 30)
+notch_filtered = apply_notch_filter(notch_filtered, 500, 180, 30)
+notch_filtered = apply_notch_filter(notch_filtered, 500, 240, 30)
+new_epoch._data = notch_filtered
+fig = new_epoch.compute_psd(fmax=250).plot(
+    average=True, amplitude=False, exclude="bads"
+)
+fig.suptitle(f"Notch filtered", size="xx-large", weight="bold")
 
 ##### 3. 샘플링 레이트를 줄이고, ALIASING 방지하여 나타내기 #####
 downsampled = new_epoch.copy().resample(sfreq=200) # sampling rate 500 -> 200
 
-n_ffts = [4096, int(round(4096 * 200 / new_epoch.info["sfreq"]))]
+n_ffts = [1024, int(round(1024 * 200 / new_epoch.info["sfreq"]))]
 fig, axes = plt.subplots(2, 1, sharey=True, layout="constrained", figsize=(10, 6))
 for ax, data, title, n_fft in zip(
     axes, [new_epoch, downsampled], ["Original", "Downsampled"], n_ffts
@@ -145,6 +166,7 @@ for ax, data, title, n_fft in zip(
     )
     ax.set(title=title, xlim=(0, 300))
 
+new_epoch = downsampled
 ##### 4. Artifact removal #####
 # Checking artifacts
 channels = ['F5', 'FC5', 'C5', 'CP5', 'P5', 'FC3', 'C3', 'CP3', 'P3', 'F1', 'FC1', 'C1', 'CP1', 'P1', 'Cz', 
@@ -155,7 +177,7 @@ artifact_picks = mne.pick_channels_regexp(channels, regexp='') # 그냥 채널�
 
 # High pass filtering and ICA
 filt_epoch = new_epoch.copy().filter(l_freq=1.0, h_freq=None)
-ica = ICA(n_components=15, max_iter="auto", random_state=97) # ICA 객체 초기화 및 생성
+ica = ICA(n_components=20, max_iter="auto", random_state=97) # ICA 객체 초기화 및 생성
 ica.fit(filt_epoch) # 필터링 된 데이터를 ICA 모델에 피팅시켜서 독립 성분들을 분리해낸다.
 ica
 
@@ -172,10 +194,10 @@ for channel_type, ratio in explained_var_ratio.items():
 # ica.plot_sources(new_epoch, show_scrollbars=False)
 
 # 이 플롯이 각각의 독립 성분의 특성을 다양하게 나타내주므로, 여기서 어떤 것이 노이즈인지를 파악한다. 
-# ica.plot_properties(new_epoch, picks=[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14])
+# ica.plot_properties(new_epoch, picks=[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19])
 
 # 어떤 독립 성분을 뺄지 정했으면, ica에 빼는 것으로 등록함
-ica.exclude = [0, 4, 5, 6, 8, 12]
+ica.exclude = [0, 2, 4, 5, 6, 10, 11, 12, 15, 16, 17, 18, 19]
 
  # ica apply를 하면 신호가 아예 바뀌어서 copy
 reconst_epoch = new_epoch.copy()
@@ -208,7 +230,7 @@ cv_split = cv.split(new_epoch_tdata)
 # LDA 구성
 # LDA는 주어진 데이터의 각 클래스 간에 제일 큰 분리가 일어나도록 그 분류하는 '직선'을 찾는 알고리즘
 lda = LinearDiscriminantAnalysis()
-csp = CSP(n_components=15, reg=None, log=True, norm_trace=False)
+csp = CSP(n_components=20, reg=None, log=True, norm_trace=False)
 scaler = StandardScaler()
 
 # CSP와 LDA를 함께 하도록 도와주는 파이프라인, 참고로 SVM 써서 비선형 -> 정확도 더 떨어짐
