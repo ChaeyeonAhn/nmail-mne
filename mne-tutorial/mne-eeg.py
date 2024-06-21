@@ -175,16 +175,20 @@ channels = ['F5', 'FC5', 'C5', 'CP5', 'P5', 'FC3', 'C3', 'CP3', 'P3', 'F1', 'FC1
 artifact_picks = mne.pick_channels_regexp(channels, regexp='') # 그냥 채널들 다 고른다는 뜻이 되어 버림
 # new_epoch.plot(order=artifact_picks, n_channels=len(artifact_picks), show_scrollbars=False)
 
+# eog_evoked = create_eog_epochs(new_epoch).average()
+# eog_evoked.apply_baseline(baseline=(None, -0.2))
+# eog_evoked.plot_joint()
+
 # High pass filtering and ICA
-filt_epoch = new_epoch.copy().filter(l_freq=1.0, h_freq=None)
-ica = ICA(n_components=20, max_iter="auto", random_state=97) # ICA 객체 초기화 및 생성
-ica.fit(filt_epoch) # 필터링 된 데이터를 ICA 모델에 피팅시켜서 독립 성분들을 분리해낸다.
+new_epoch = new_epoch.copy().filter(l_freq=1.0, h_freq=None)
+ica = ICA(n_components=15, max_iter="auto", random_state=97) # ICA 객체 초기화 및 생성
+ica.fit(new_epoch) # 필터링 된 데이터를 ICA 모델에 피팅시켜서 독립 성분들을 분리해낸다.
 ica
 
 # 추출된 독립 성분들이 원본 데이터의 '변동성'을 얼마나 잘 설명하는지
 # 각 성분이 이 데이터에서 얼마나 중요한지, 중요도가 높다는 것은 artifact일 확률이 낮다는 것 (notion)
 # 채널 타입이 EEG로 하나기 때문에, EEG에 대한 것만 출력되고, 기여도가 99%로 매우 높음
-explained_var_ratio = ica.get_explained_variance_ratio(filt_epoch)
+explained_var_ratio = ica.get_explained_variance_ratio(new_epoch)
 for channel_type, ratio in explained_var_ratio.items():
     print(
         f"Fraction of {channel_type} variance explained by all components: " f"{ratio}"
@@ -194,10 +198,17 @@ for channel_type, ratio in explained_var_ratio.items():
 # ica.plot_sources(new_epoch, show_scrollbars=False)
 
 # 이 플롯이 각각의 독립 성분의 특성을 다양하게 나타내주므로, 여기서 어떤 것이 노이즈인지를 파악한다. 
-# ica.plot_properties(new_epoch, picks=[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19])
+# ica.plot_properties(new_epoch, picks=[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14])
 
 # 어떤 독립 성분을 뺄지 정했으면, ica에 빼는 것으로 등록함
-ica.exclude = [0, 2, 4, 5, 6, 10, 11, 12, 15, 16, 17, 18, 19]
+ica.exclude = [1]
+# eog_indices, eog_scores = ica.find_bads_eog(new_epoch)
+# ica.exclude = eog_indices
+
+# ica.plot_scores(eog_scores)
+# ica.plot_properties(new_epoch, picks=eog_indices)
+# ica.plot_sources(new_epoch, show_scrollbars=False)
+# ica.plot_sources(eog_evoked)
 
  # ica apply를 하면 신호가 아예 바뀌어서 copy
 reconst_epoch = new_epoch.copy()
@@ -216,7 +227,7 @@ reconst_epoch_train = reconst_epoch.copy().crop(tmin=1.0, tmax=2.0)
 reconst_epoch_data = reconst_epoch.get_data(copy=False)
 reconst_epoch_tdata = reconst_epoch_train.get_data(copy=False)
 
-# 오히려 ICA 안 한 애들로 학습한 것이 정확도가 0.02 더 높다 큰 차이는 아니지만...!
+# 오히려 ICA 안 한 애들로 학습한 것이 정확도가 더 높다 큰 차이는 아니지만...!
 new_epoch_train = new_epoch.copy().crop(tmin=1.0, tmax=2.0)
 new_epoch_data = new_epoch.get_data(copy=False)
 new_epoch_tdata = new_epoch_train.get_data(copy=False)
@@ -230,7 +241,7 @@ cv_split = cv.split(new_epoch_tdata)
 # LDA 구성
 # LDA는 주어진 데이터의 각 클래스 간에 제일 큰 분리가 일어나도록 그 분류하는 '직선'을 찾는 알고리즘
 lda = LinearDiscriminantAnalysis()
-csp = CSP(n_components=20, reg=None, log=True, norm_trace=False)
+csp = CSP(n_components=4, reg=None, log=True, norm_trace=False)
 scaler = StandardScaler()
 
 # CSP와 LDA를 함께 하도록 도와주는 파이프라인, 참고로 SVM 써서 비선형 -> 정확도 더 떨어짐
@@ -253,8 +264,8 @@ class_balance = np.mean(label_array == label_array[0])
 class_balance = max(class_balance, 1.0 - class_balance)
 
 # 얼마나 잘 검증하는지 / 기준 비율 (다수의 비율)
-print(f"****** Classification accuracy (w/ ICA): {np.mean(scores1)} / Chance level: {class_balance} ******")
-print(f"****** Classification accuracy (no ICA): {np.mean(scores2)} / Chance level: {class_balance} ******")
+print(f"****** Classification accuracy (w/ ICA): {np.mean(scores1) * 100}% / Chance level: {class_balance * 100}% ******")
+print(f"****** Classification accuracy (no ICA): {np.mean(scores2) * 100}% / Chance level: {class_balance * 100}% ******")
 
 
 # 전체 데이터에 대해서 CSP 학습! 여기서는 '진짜' 학습
