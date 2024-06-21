@@ -1,4 +1,6 @@
 import numpy as np
+import torch
+from torch.utils.data import DataLoader, TensorDataset
 import mne
 from mne.preprocessing import ICA, corrmap, create_ecg_epochs, create_eog_epochs
 
@@ -17,6 +19,8 @@ from mne.io import concatenate_raws, read_raw_edf
 
 import json
 import matplotlib.pyplot as plt
+
+import torch.nn as nn
 import os
 
 def import_EEG(file_name):
@@ -167,6 +171,7 @@ for ax, data, title, n_fft in zip(
     ax.set(title=title, xlim=(0, 300))
 
 new_epoch = downsampled
+
 ##### 4. Artifact removal #####
 # Checking artifacts
 channels = ['F5', 'FC5', 'C5', 'CP5', 'P5', 'FC3', 'C3', 'CP3', 'P3', 'F1', 'FC1', 'C1', 'CP1', 'P1', 'Cz', 
@@ -202,117 +207,85 @@ for channel_type, ratio in explained_var_ratio.items():
 
 # 어떤 독립 성분을 뺄지 정했으면, ica에 빼는 것으로 등록함
 ica.exclude = [1]
-# eog_indices, eog_scores = ica.find_bads_eog(new_epoch)
-# ica.exclude = eog_indices
 
-# ica.plot_scores(eog_scores)
-# ica.plot_properties(new_epoch, picks=eog_indices)
-# ica.plot_sources(new_epoch, show_scrollbars=False)
-# ica.plot_sources(eog_evoked)
-
- # ica apply를 하면 신호가 아예 바뀌어서 copy
-reconst_epoch = new_epoch.copy()
-ica.apply(reconst_epoch)
-
-new_epoch.plot(order=artifact_picks, n_channels=len(artifact_picks), show_scrollbars=False)
-reconst_epoch.plot(
-    order=artifact_picks, n_channels=len(artifact_picks), show_scrollbars=False
-)
-# del reconst_epoch
-
-## 이왕 ICA로 전처리 해본 김에 이걸로 특징 추출 해보자!
-## 이제부터는 CSP를 이용하여 decoding
-## 아래는 훈련용 데이터를 만들고 (그냥 시간 기준으로 자름), numpy 배열 객체로 뽑기
-reconst_epoch_train = reconst_epoch.copy().crop(tmin=1.0, tmax=2.0)
-reconst_epoch_data = reconst_epoch.get_data(copy=False)
-reconst_epoch_tdata = reconst_epoch_train.get_data(copy=False)
-
-# 오히려 ICA 안 한 애들로 학습한 것이 정확도가 더 높다 큰 차이는 아니지만...!
-new_epoch_train = new_epoch.copy().crop(tmin=1.0, tmax=2.0)
-new_epoch_data = new_epoch.get_data(copy=False)
-new_epoch_tdata = new_epoch_train.get_data(copy=False)
-
-# 내가 데이터를 어떻게 쪼개서 교차 검증에 쓸 건지
-# 10개로 쪼갤 거고, 테스트 셋은 20%, 나머지는 훈련용 데이터
-cv = ShuffleSplit(10, test_size=0.2, random_state=42)
-cv_split = cv.split(reconst_epoch_tdata)
-cv_split = cv.split(new_epoch_tdata)
-
-# LDA 구성
-# LDA는 주어진 데이터의 각 클래스 간에 제일 큰 분리가 일어나도록 그 분류하는 '직선'을 찾는 알고리즘
-lda = LinearDiscriminantAnalysis()
-csp = CSP(n_components=4, reg=None, log=True, norm_trace=False)
-scaler = StandardScaler()
-
-# CSP와 LDA를 함께 하도록 도와주는 파이프라인, 참고로 SVM 써서 비선형 -> 정확도 더 떨어짐
-# 스케일러 써도 크게 안 달라짐
-clf = Pipeline([
-    ("CSP", csp), 
-    ("Scaler", scaler),
-    ("LDA", lda)])
-
-# 교차 검증을 통해서 내가 만든 분류 모델의 점수를 배열에 저장하여 반환
-# 여기서 쓰는 CSP는 모델의 성능을 평가하기 위함
-# 여기는 데이터 fragment를 가지고 함
-scores1 = cross_val_score(clf, reconst_epoch_tdata, label_array, cv=cv, n_jobs=None)
-scores2 = cross_val_score(clf, new_epoch_tdata, label_array, cv=cv, n_jobs=None)
-
-# 레이블 어레이에서 0번과 각 요소들이 똑같은 경우의 수를 계산하여 평균을 냄
-class_balance = np.mean(label_array == label_array[0])
-
-# 다수의 빈도수를 설정
-class_balance = max(class_balance, 1.0 - class_balance)
-
-# 얼마나 잘 검증하는지 / 기준 비율 (다수의 비율)
-print(f"****** Classification accuracy (w/ ICA): {np.mean(scores1) * 100}% ******")
-print(f"****** Classification accuracy (no ICA): {np.mean(scores2) * 100}% ******")
+ica.apply(new_epoch)
 
 
-# 전체 데이터에 대해서 CSP 학습! 여기서는 '진짜' 학습
-csp.fit_transform(reconst_epoch_data, label_array)
-csp.fit_transform(new_epoch_data, label_array)
+### 전처리한 Epoch Array 형태의 EEG 데이터를 tensor 형태로 변환
+data_tensor = torch.tensor(new_epoch.get_data()) # 얘는 이폭 어레이
+labels_tensor = torch.tensor(label_array) # 얘는 넘파이 상태
 
-csp.plot_patterns(reconst_epoch.info, ch_type="eeg", units="Patterns (AU)", size=1.5)
-csp.plot_patterns(new_epoch.info, ch_type="eeg", units="Patterns (AU)", size=1.5)
+data_tensor = data_tensor.permute(0, 2, 1)
 
-# # 시간에 따른 퍼포먼스 시각적 열람하기
-# sfreq = new_epoch.info["sfreq"] #500
+dataset = TensorDataset(data_tensor, labels_tensor)
+dataloader = DataLoader(dataset, batch_size=16, shuffle=True)
 
-# # 슬라이딩 윈도우의 크기를 지정
-# # 슬라이딩 윈도우란, 데이터 위에 놓고 조금씩 움직여가며 분석을 수행할 때 쓰는 도구
-# # 순차적인 신호 변화나 국소적인 특징을 알아볼 때 유용하다.
-# w_length = int(sfreq * 0.5)  # running classifier: window length
-# w_step = int(sfreq * 0.1)  # running classifier: window step size
-# w_start = np.arange(0, new_epoch_data.shape[2] - w_length, w_step)
+class EEG_CNN(nn.Module):
+    def __init__(self):
+        super(EEG_CNN, self).__init__()
+        self.conv1 = nn.Conv1d(in_channels=10, out_channels=64, kernel_size=3)
+        self.pool = nn.MaxPool1d(kernel_size=2)
+        self.conv2 = nn.Conv1d(in_channels=64, out_channels=128, kernel_size=3)
+        self.flatten = nn.Flatten()
+        self.fc1 = nn.Linear(128*11, 64) # 이건 뭐지?
+        self.fc2 = nn.Linear(64, 1)
+        self.sigmoid = nn.Sigmoid()
 
-# scores_windows = []
+    def forward(self, x):
+        x = self.pool(torch.relu(self.conv1(x)))
+        x = self.pool(torch.relu(self.conv2(x)))
+        x = self.flatten(x)
+        x = torch.relu(self.fc1(x))
+        x = self.sigmoid(self.fc2(x))
+        return x
+    
+model = EEG_CNN()
+print(model)
 
-# for train_idx, test_idx in cv_split: # 자세히는 모르겠지만 훈련 / 테스트 데이터로 나뉘어 있음
-#     y_train, y_test = label_array[train_idx], label_array[test_idx]
+criterion = nn.BCELoss()
+optimizer = torch.optim.Adam(model.parameters(), lr=0.01)
 
-#     X_train = csp.fit_transform(new_epoch_tdata[train_idx], y_train) # 얘는 훈련 데이터에 학습 후 학습된 모델 바탕으로 변환
-#     X_test = csp.transform(new_epoch_tdata[test_idx]) # 얘는 테스트 데이터에 앞전에 학습한 모델 가지고 변환만.
+num_epochs = 10
 
-#     # fit classifier
-#     lda.fit(X_train, y_train)
+for epoch in range(num_epochs):
+    model.train()
+    for inputs, targets in dataloader:
+        # Forward pass
+        outputs = model(inputs)
+        loss = criterion(outputs.squeeze(), targets)
+        
+        # Backward pass and optimization
+        optimizer.zero_grad()
+        loss.backward()
+        optimizer.step()
+    
+    print(f'Epoch [{epoch+1}/{num_epochs}], Loss: {loss.item():.4f}')
 
-#     # running classifier: test classifier on sliding window
-#     score_this_window = []
-#     for n in w_start:
-#         X_test = csp.transform(new_epoch_data[test_idx][:, :, n : (n + w_length)]) 
-#         score_this_window.append(lda.score(X_test, y_test))
-#     scores_windows.append(score_this_window)
+test_data = np.random.rand(20, 50, 10).astype(np.float32)
+test_labels = np.random.randint(2, size=20).astype(np.float32)
 
-# # Plot scores over time
-# w_times = (w_start + w_length / 2.0) / sfreq + new_epoch.tmin
+# PyTorch Tensor로 변환
+test_data_tensor = torch.tensor(test_data).permute(0, 2, 1)
+test_labels_tensor = torch.tensor(test_labels)
 
-# plt.figure()
-# plt.plot(w_times, np.mean(scores_windows, 0), label="Score")
-# plt.axvline(0, linestyle="--", color="k", label="Onset")
-# plt.axhline(0.5, linestyle="-", color="k", label="Chance")
-# plt.xlabel("time (s)")
-# plt.ylabel("classification accuracy")
-# plt.title("Classification score over time")
-# plt.legend(loc="lower right")
-# plt.show()
+# DataLoader 생성
+test_dataset = TensorDataset(test_data_tensor, test_labels_tensor)
+test_dataloader = DataLoader(test_dataset, batch_size=16, shuffle=False)
+
+# 모델 평가
+model.eval()
+with torch.no_grad():
+    test_loss = 0
+    correct = 0
+    total = 0
+    for inputs, targets in test_dataloader:
+        outputs = model(inputs)
+        test_loss += criterion(outputs.squeeze(), targets).item()
+        predicted = (outputs.squeeze() > 0.5).float()
+        total += targets.size(0)
+        correct += (predicted == targets).sum().item()
+    
+    print(f'Test Loss: {test_loss / len(test_dataloader):.4f}')
+    print(f'Test Accuracy: {correct / total:.4f}')
+
 plt.show()
