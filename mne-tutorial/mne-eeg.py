@@ -80,6 +80,47 @@ def apply_notch_filter(data, sfreq, freq=60.0, quality_factor=30.0):
     filtered_data = filtfilt(b, a, data, axis=-1)
     return filtered_data
 
+def epochs_to_relative_psd_topo(epochs, cut_list, file_name='topomap',
+                                event_list=['Rest', 'Right Hand'], save_path='topoplot.png'):
+    # epochs = epochs.filter(l_freq=l_freq,h_freq=h_freq,method='iir',verbose=False)
+    # when 'average', projection=True applies projection with apply_proj, projection=False immediately applies projection to the data
+    
+    epochs = epochs.set_eeg_reference('average', projection=True,verbose=False)
+
+    fig,ax=plt.subplots(len(event_list)-1, len(cut_list), figsize=(30,30))
+    fig.suptitle("{}".format(file_name, fontsize=16))
+
+    for i, cut_range in enumerate(cut_list):
+        lowcut, highcut = cut_range
+
+        # REST (this will be used to subtract other psd)
+        epoch_0 = epochs[event_list[0]]
+        psd_0, freq_0 = epoch_0.compute_psd(fmin=lowcut, fmax=highcut).get_data(return_freqs=True)
+        print(psd_0.shape)
+        psd_0 = 10 * np.log10(psd_0)
+        psd_0 = np.mean(psd_0, axis=0) # mean over sample dimension
+        psd_0 = np.mean(psd_0, axis=1) # mean over time dimension
+
+        for j in range(1,len(event_list)):
+            epoch_j = epochs[event_list[j]]
+            psd_j, freq_j = epoch_j.compute_psd(fmin=lowcut, fmax=highcut).get_data(return_freqs=True)#mne.time_frequency.psd_welch(epoch_j, lowcut, highcut,verbose=False)
+
+            psd_j = 10 * np.log10(psd_j)
+            psd_j = np.mean(psd_j, axis=0)
+            psd_j = np.mean(psd_j, axis=1)
+
+            psd_j -= psd_0
+
+            topo_0 = mne.viz.plot_topomap(psd_j, epoch_j.info, axes=ax[j - 1][i], cmap=plt.cm.jet,
+                                          show=False, names=epoch_j.info['ch_names'], vlim=(min(psd_j), max(psd_j)))
+
+            ax[j - 1][i].set_title(event_list[j] + str(cut_range), fontdict={'fontsize': 24, 'fontweight': 'medium'})
+
+    if save_path is not None:
+        fig.savefig(save_path)  # save figure, but not working for some reason
+
+    plt.show()
+
 # print(os.getcwd())
 
 EEG_array, label_array = import_EEG('[CYA]MI_four_1.txt') # 파일 읽어들이기
@@ -214,10 +255,36 @@ ica.exclude = [1]
 reconst_epoch = new_epoch.copy()
 ica.apply(reconst_epoch)
 
-new_epoch.plot(order=artifact_picks, n_channels=len(artifact_picks), show_scrollbars=False)
-reconst_epoch.plot(
-    order=artifact_picks, n_channels=len(artifact_picks), show_scrollbars=False
-)
+epochs_to_relative_psd_topo(reconst_epoch, cut_list) # What is this cut_list?
+
+# new_epoch.plot(order=artifact_picks, n_channels=len(artifact_picks), show_scrollbars=False)
+# reconst_epoch.plot(
+#     order=artifact_picks, n_channels=len(artifact_picks), show_scrollbars=False
+# )
+
+# def standardize_data(data):
+#     n_epochs, n_channels, n_timepoints = data.shape
+#     standardized_data = np.zeros((n_epochs, n_channels, n_timepoints))
+#     scaler = StandardScaler()
+#     for channel in range(n_channels): # 채널별로 다 표준화
+#         scaled_data = scaler.fit_transform(data[:, channel, :].T).T
+#         standardized_data[:, channel, :] = scaled_data
+#     return standardized_data
+
+# def normalize_data(data):
+#     n_epochs, n_channels, n_timepoints = data.shape
+#     normalized_data = np.zeros((n_epochs, n_channels, n_timepoints))
+#     scaler = MinMaxScaler()
+#     for channel in range(n_channels):
+#         scaled_data = scaler.fit_transform(data[:, channel, :].T).T
+#         normalized_data[:, channel, :] = scaled_data
+#     return normalized_data
+
+# data = standardize_data(reconst_epoch.get_data())
+# data = normalize_data(data)
+
+# reconst_epoch = EEG_to_epochs(data, label_array)
+
 # del reconst_epoch
 
 ## 이왕 ICA로 전처리 해본 김에 이걸로 특징 추출 해보자!
@@ -227,16 +294,16 @@ reconst_epoch_train = reconst_epoch.copy().crop(tmin=1.0, tmax=2.0)
 reconst_epoch_data = reconst_epoch.get_data(copy=False)
 reconst_epoch_tdata = reconst_epoch_train.get_data(copy=False)
 
-# 오히려 ICA 안 한 애들로 학습한 것이 정확도가 더 높다 큰 차이는 아니지만...!
-new_epoch_train = new_epoch.copy().crop(tmin=1.0, tmax=2.0)
-new_epoch_data = new_epoch.get_data(copy=False)
-new_epoch_tdata = new_epoch_train.get_data(copy=False)
+# # 오히려 ICA 안 한 애들로 학습한 것이 정확도가 더 높다 큰 차이는 아니지만...!
+# new_epoch_train = new_epoch.copy().crop(tmin=1.0, tmax=2.0)
+# new_epoch_data = new_epoch.get_data(copy=False)
+# new_epoch_tdata = new_epoch_train.get_data(copy=False)
 
 # 내가 데이터를 어떻게 쪼개서 교차 검증에 쓸 건지
 # 10개로 쪼갤 거고, 테스트 셋은 20%, 나머지는 훈련용 데이터
 cv = ShuffleSplit(10, test_size=0.2, random_state=42)
 cv_split = cv.split(reconst_epoch_tdata)
-cv_split = cv.split(new_epoch_tdata)
+# cv_split = cv.split(new_epoch_tdata)
 
 # LDA 구성
 # LDA는 주어진 데이터의 각 클래스 간에 제일 큰 분리가 일어나도록 그 분류하는 '직선'을 찾는 알고리즘
@@ -244,7 +311,7 @@ lda = LinearDiscriminantAnalysis()
 csp = CSP(n_components=4, reg=None, log=True, norm_trace=False)
 scaler = StandardScaler()
 
-# CSP와 LDA를 함께 하도록 도와주는 파이프라인, 참고로 SVM 써서 비선형 -> 정확도 더 떨어짐
+# CSP와 LDA를 함께 하도록 도와주는 파이프라인, 참고로 SVM 써서 비선형
 # 스케일러 써도 크게 안 달라짐
 clf = Pipeline([
     ("CSP", csp), 
@@ -255,7 +322,7 @@ clf = Pipeline([
 # 여기서 쓰는 CSP는 모델의 성능을 평가하기 위함
 # 여기는 데이터 fragment를 가지고 함
 scores1 = cross_val_score(clf, reconst_epoch_tdata, label_array, cv=cv, n_jobs=None)
-scores2 = cross_val_score(clf, new_epoch_tdata, label_array, cv=cv, n_jobs=None)
+# scores2 = cross_val_score(clf, new_epoch_tdata, label_array, cv=cv, n_jobs=None)
 
 # 레이블 어레이에서 0번과 각 요소들이 똑같은 경우의 수를 계산하여 평균을 냄
 class_balance = np.mean(label_array == label_array[0])
@@ -265,15 +332,15 @@ class_balance = max(class_balance, 1.0 - class_balance)
 
 # 얼마나 잘 검증하는지 / 기준 비율 (다수의 비율)
 print(f"****** Classification accuracy (w/ ICA): {np.mean(scores1) * 100}% ******")
-print(f"****** Classification accuracy (no ICA): {np.mean(scores2) * 100}% ******")
+# print(f"****** Classification accuracy (no ICA): {np.mean(scores2) * 100}% ******")
 
 
 # 전체 데이터에 대해서 CSP 학습! 여기서는 '진짜' 학습
 csp.fit_transform(reconst_epoch_data, label_array)
-csp.fit_transform(new_epoch_data, label_array)
+# csp.fit_transform(new_epoch_data, label_array)
 
 csp.plot_patterns(reconst_epoch.info, ch_type="eeg", units="Patterns (AU)", size=1.5)
-csp.plot_patterns(new_epoch.info, ch_type="eeg", units="Patterns (AU)", size=1.5)
+# csp.plot_patterns(new_epoch.info, ch_type="eeg", units="Patterns (AU)", size=1.5)
 
 # # 시간에 따른 퍼포먼스 시각적 열람하기
 # sfreq = new_epoch.info["sfreq"] #500

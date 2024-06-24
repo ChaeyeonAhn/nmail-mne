@@ -1,12 +1,12 @@
 import numpy as np
 import torch
-from torch.utils.data import DataLoader, TensorDataset, random_split
+from torch.utils.data import DataLoader, TensorDataset, random_split, Subset
 import mne
 from mne.preprocessing import ICA, corrmap, create_ecg_epochs, create_eog_epochs
 
 from sklearn.discriminant_analysis import LinearDiscriminantAnalysis
 from sklearn.preprocessing import StandardScaler, MinMaxScaler
-from sklearn.model_selection import ShuffleSplit, cross_val_score
+from sklearn.model_selection import ShuffleSplit, cross_val_score, KFold
 from sklearn.pipeline import Pipeline
 from mne import Epochs, pick_types
 from mne.channels import make_standard_montage
@@ -88,12 +88,12 @@ def apply_notch_filter(data, sfreq, freq=60.0, quality_factor=30.0):
 
 EEG_array, label_array = import_EEG('[CYA]MI_four_1.txt') # 파일 읽어들이기
 new_epoch = EEG_to_epochs(EEG_array, label_array) # 에폭 어레이 형성
-fig = new_epoch.plot(n_epochs=1, show=True, n_channels=32, event_color=dict({-1: "blue", 1: "red", 2: "yellow", 3: "green"})) # 기본적인 EEG 데이터 열람
-# 이벤트별로 온셋 타이밍 색깔로 보고 싶은데 코드가 적용이 안 되나 봄
-data, events = EEG_array_modifier(EEG_array, label_array)
-fig = mne.viz.plot_events(
-    events, event_id={'Rest': 0, 'RightHand': 1, 'LeftHand': 2, 'Feet': 3}, sfreq=new_epoch.info["sfreq"]
-)
+# fig = new_epoch.plot(n_epochs=1, scalings = {"eeg": 500}, show=True, n_channels=32, event_color=dict({-1: "blue", 1: "red", 2: "yellow", 3: "green"})) # 기본적인 EEG 데이터 열람
+# # 이벤트별로 온셋 타이밍 색깔로 보고 싶은데 코드가 적용이 안 되나 봄
+# data, events = EEG_array_modifier(EEG_array, label_array)
+# fig = mne.viz.plot_events(
+#     events, event_id={'Rest': 0, 'RightHand': 1, 'LeftHand': 2, 'Feet': 3}, sfreq=new_epoch.info["sfreq"]
+# )
 # print("First few labels:", label_array[:10])
 # print("First EEG epoch (first few samples):", EEG_array[0, :, :10])
 
@@ -102,10 +102,10 @@ fig = mne.viz.plot_events(
 cutoff = 2
 # highpass = new_epoch.copy().filter(l_freq=cutoff, h_freq=None)
 highpass = new_epoch.filter(l_freq=cutoff, h_freq=None)
-with mne.viz.use_browser_backend("matplotlib"):
-    fig = highpass.plot(n_channels=32, n_epochs=1)
-fig.subplots_adjust(top=0.9)
-fig.suptitle(f"High-pass filtered at {cutoff} Hz", size="xx-large", weight="bold")
+# with mne.viz.use_browser_backend("matplotlib"):
+#     fig = highpass.plot(n_channels=32, n_epochs=1)
+# fig.subplots_adjust(top=0.9)
+# fig.suptitle(f"High-pass filtered at {cutoff} Hz", size="xx-large", weight="bold")
 
 # ## 필터 양상 보기 ##
 # filter_params = mne.filter.create_filter(
@@ -138,9 +138,9 @@ fig.suptitle(f"High-pass filtered at {cutoff} Hz", size="xx-large", weight="bold
 # compute_psd returns EpochSpectrum
 # average : averages over channels
 # amplitude : False thus Power spectrum (Amplitude spectrum if True)
-fig = new_epoch.compute_psd(fmax=250, method="welch", n_fft=4096).plot(
-    average=True, amplitude=False, exclude="bads"
-)
+# fig = new_epoch.compute_psd(fmax=250, method="welch", n_fft=4096).plot(
+#     average=True, amplitude=False, exclude="bads"
+# )
 
 # epoch array data에 노치 필터를 적용하고 싶은데 지원하지 않는다고 한다.
 # raw 에 적용한 거 보니까 60 헤르츠 하모닉스에서 파워가 확 감소하는 방향으로 수정됨
@@ -152,23 +152,23 @@ notch_filtered = apply_notch_filter(notch_filtered, 500, 120, 30)
 notch_filtered = apply_notch_filter(notch_filtered, 500, 180, 30)
 notch_filtered = apply_notch_filter(notch_filtered, 500, 240, 30)
 new_epoch._data = notch_filtered
-fig = new_epoch.compute_psd(fmax=250).plot(
-    average=True, amplitude=False, exclude="bads"
-)
-fig.suptitle(f"Notch filtered", size="xx-large", weight="bold")
+# fig = new_epoch.compute_psd(fmax=250).plot(
+#     average=True, amplitude=False, exclude="bads"
+# )
+# fig.suptitle(f"Notch filtered", size="xx-large", weight="bold")
 
 ##### 3. 샘플링 레이트를 줄이고, ALIASING 방지하여 나타내기 #####
 downsampled = new_epoch.copy().resample(sfreq=200) # sampling rate 500 -> 200
 
-n_ffts = [1024, int(round(1024 * 200 / new_epoch.info["sfreq"]))]
-fig, axes = plt.subplots(2, 1, sharey=True, layout="constrained", figsize=(10, 6))
-for ax, data, title, n_fft in zip(
-    axes, [new_epoch, downsampled], ["Original", "Downsampled"], n_ffts
-):
-    fig = data.compute_psd(method="welch", n_fft=n_fft).plot(
-        average=True, amplitude=False, picks="data", exclude="bads", axes=ax
-    )
-    ax.set(title=title, xlim=(0, 300))
+# n_ffts = [1024, int(round(1024 * 200 / new_epoch.info["sfreq"]))]
+# fig, axes = plt.subplots(2, 1, sharey=True, layout="constrained", figsize=(10, 6))
+# for ax, data, title, n_fft in zip(
+#     axes, [new_epoch, downsampled], ["Original", "Downsampled"], n_ffts
+# ):
+#     fig = data.compute_psd(method="welch", n_fft=n_fft).plot(
+#         average=True, amplitude=False, picks="data", exclude="bads", axes=ax
+#     )
+#     ax.set(title=title, xlim=(0, 300))
 
 new_epoch = downsampled
 
@@ -228,15 +228,30 @@ def normalize_data(data):
         normalized_data[:, channel, :] = scaled_data
     return normalized_data
 
-# data = standardize_data(new_epoch.get_data())
-data = normalize_data(new_epoch.get_data())
+data = standardize_data(new_epoch.get_data())
+data = normalize_data(data) # 둘 다 하니까 0%는 좀 심한데
+
+channels = ['F5', 'FC5', 'C5', 'CP5', 'P5', 'FC3', 'C3', 'CP3', 'P3', 'F1', 'FC1', 'C1', 'CP1', 'P1', 'Cz', 'CPz', 'Pz', 'F2', 'FC2', 'C2', 'CP2', 'P2', 'FC4', 'C4', 'CP4', 'P4', 'F6', 'FC6', 'C6', 'CP6', 'P6']
+n_channels = len(channels)
+ch_types = ['eeg'] * n_channels
+montage = mne.channels.make_standard_montage('standard_1020')
+info = mne.create_info(ch_names=channels, sfreq=500, ch_types=ch_types)
+info = info.set_montage(montage) # 설정한 montage 사용
+# 여기 피드 되는 두 개 array는 import_EEG에서 나온 친구들
+data1, events = EEG_array_modifier(EEG_array, label_array)
+event_id = {'Rest': 0, 'RightHand': 1, 'LeftHand': 2, 'Feet': 3}
+
+normstan_epoch = mne.EpochsArray(data1, info, events, tmin=0, event_id=event_id)
+# normstan_epoch.plot(n_epochs=1, scalings = {"eeg": 500}, show=True, n_channels=32, event_color=dict({-1: "blue", 1: "red", 2: "yellow", 3: "green"}))
+
+kf = KFold(n_splits=5, shuffle=True, random_state=42)
 
 ### 전처리한 Epoch Array 형태의 EEG 데이터를 tensor 형태로 변환
 data_tensor = torch.tensor(data, dtype=torch.float32) # 얘는 이폭 어레이
 labels_tensor = torch.tensor(label_array, dtype=torch.float32) # 얘는 넘파이 상태
 # data_tensor = data_tensor.permute(0, 2, 1)
 dataset = TensorDataset(data_tensor, labels_tensor)
-train_size = int(0.7 * len(dataset))
+train_size = int(0.6 * len(dataset))
 test_size = len(dataset) - train_size
 train_dataset, test_dataset = random_split(dataset, [train_size, test_size])
 
@@ -263,44 +278,64 @@ class EEG_CNN(nn.Module):
         x = torch.relu(self.linear1(x))
         x = self.sigmoid(self.linear2(x))
         return x
-    
-model = EEG_CNN()
-print(model)
 
-criterion = nn.CrossEntropyLoss()
-optimizer = torch.optim.SGD(model.parameters(), lr=0.01) # 학습률 조정함
-
-num_epochs = 50
-
-for epoch in range(num_epochs):
+def train_model(model, train_loader, criterion, optimizer):
     model.train()
+    running_loss = 0.0
     for inputs, targets in train_loader:
-        # Forward pass
         outputs = model(inputs)
         loss = criterion(outputs.squeeze(), targets)
         
-        # Backward pass and optimization
         optimizer.zero_grad()
         loss.backward()
         optimizer.step()
-    
-    print(f'Epoch [{epoch+1}/{num_epochs}], Loss: {loss.item():.4f}')
+        
+        running_loss += loss.item()
+    avg_loss = running_loss / len(train_loader)
+    return avg_loss
 
-
-# 모델 평가
-model.eval()
-with torch.no_grad():
+def evaluate_model(model, test_loader, criterion):
+    model.eval()
     test_loss = 0
     correct = 0
     total = 0
-    for inputs, targets in test_loader:
-        outputs = model(inputs)
-        test_loss += criterion(outputs.squeeze(), targets).item()
-        predicted = (outputs.squeeze() > 0.5).float()
-        total += targets.size(0)
-        correct += (predicted == targets).sum().item()
+    with torch.no_grad():
+        for inputs, targets in test_loader:
+            outputs = model(inputs)
+            loss = criterion(outputs.squeeze(), targets)
+            test_loss += loss.item()
+            predicted = (outputs.squeeze() > 0.5).float()
+            total += targets.size(0)
+            correct += (predicted == targets).sum().item()
+    avg_loss = test_loss / len(test_loader)
+    accuracy = correct / total
+    return avg_loss, accuracy
+
+# K-Fold Cross-Validation
+kfold_results = []
+for train_index, test_index in kf.split(dataset):
+    train_subset = Subset(dataset, train_index)
+    test_subset = Subset(dataset, test_index)
     
-    print(f'Test Loss: {test_loss / len(test_loader):.4f}')
-    print(f'Test Accuracy: {correct / total:.4f}')
+    train_loader = DataLoader(train_subset, batch_size=8, shuffle=True)
+    test_loader = DataLoader(test_subset, batch_size=8, shuffle=False)
+    
+    model = EEG_CNN()
+    criterion = nn.CrossEntropyLoss()
+    optimizer = torch.optim.SGD(model.parameters(), lr=0.01)
+    
+    num_epochs = 50
+    for epoch in range(num_epochs):
+        train_loss = train_model(model, train_loader, criterion, optimizer)
+        print(f'Epoch: {epoch} / Train Loss: {train_loss:.4f}')
+    
+    test_loss, test_accuracy = evaluate_model(model, test_loader, criterion)
+    kfold_results.append((test_loss, test_accuracy))
+
+avg_test_loss = np.mean([result[0] for result in kfold_results])
+avg_test_accuracy = np.mean([result[1] for result in kfold_results])
+
+print(f'Average Test Loss: {avg_test_loss:.4f}')
+print(f'Average Test Accuracy: {avg_test_accuracy:.4f}')
 
 plt.show()
