@@ -1,6 +1,6 @@
 import numpy as np
 import torch
-from torch.utils.data import DataLoader, TensorDataset
+from torch.utils.data import DataLoader, TensorDataset, random_split
 import mne
 from mne.preprocessing import ICA, corrmap, create_ecg_epochs, create_eog_epochs
 
@@ -42,7 +42,7 @@ def import_EEG(file_name):
             data = np.float64(data)
             EEG_array.append(data)
     
-    EEG_array = np.array(EEG_array) * 0.000000016 # epoch * timestamp * channel 형태의 3D array 생성
+    EEG_array = np.array(EEG_array) # epoch * timestamp * channel 형태의 3D array 생성
     label_array = np.array(label_array) # 0, 1, 2, 3 어떤 상상을 하는 지 나타내는 숫자들
     EEG_array = np.transpose(EEG_array, (0, 2, 1)) # epoch * channel * timestamp (EpochArray 형식 맞추려고)
     return EEG_array, label_array
@@ -210,46 +210,71 @@ ica.exclude = [1]
 
 ica.apply(new_epoch)
 
+def standardize_data(data):
+    n_epochs, n_channels, n_timepoints = data.shape
+    standardized_data = np.zeros((n_epochs, n_channels, n_timepoints))
+    scaler = StandardScaler()
+    for channel in range(n_channels): # 채널별로 다 표준화
+        scaled_data = scaler.fit_transform(data[:, channel, :].T).T
+        standardized_data[:, channel, :] = scaled_data
+    return standardized_data
+
+def normalize_data(data):
+    n_epochs, n_channels, n_timepoints = data.shape
+    normalized_data = np.zeros((n_epochs, n_channels, n_timepoints))
+    scaler = MinMaxScaler()
+    for channel in range(n_channels):
+        scaled_data = scaler.fit_transform(data[:, channel, :].T).T
+        normalized_data[:, channel, :] = scaled_data
+    return normalized_data
+
+# data = standardize_data(new_epoch.get_data())
+data = normalize_data(new_epoch.get_data())
 
 ### 전처리한 Epoch Array 형태의 EEG 데이터를 tensor 형태로 변환
-data_tensor = torch.tensor(new_epoch.get_data()) # 얘는 이폭 어레이
-labels_tensor = torch.tensor(label_array) # 얘는 넘파이 상태
-
-data_tensor = data_tensor.permute(0, 2, 1)
-
+data_tensor = torch.tensor(data, dtype=torch.float32) # 얘는 이폭 어레이
+labels_tensor = torch.tensor(label_array, dtype=torch.float32) # 얘는 넘파이 상태
+# data_tensor = data_tensor.permute(0, 2, 1)
 dataset = TensorDataset(data_tensor, labels_tensor)
-dataloader = DataLoader(dataset, batch_size=16, shuffle=True)
+train_size = int(0.7 * len(dataset))
+test_size = len(dataset) - train_size
+train_dataset, test_dataset = random_split(dataset, [train_size, test_size])
+
+train_loader = DataLoader(train_dataset, batch_size=8, shuffle=True)
+test_loader = DataLoader(test_dataset, batch_size=8, shuffle=True)
 
 class EEG_CNN(nn.Module):
     def __init__(self):
         super(EEG_CNN, self).__init__()
-        self.conv1 = nn.Conv1d(in_channels=10, out_channels=64, kernel_size=3)
+        self.conv1 = nn.Conv1d(in_channels=31, out_channels=64, kernel_size=3)
         self.pool = nn.MaxPool1d(kernel_size=2)
         self.conv2 = nn.Conv1d(in_channels=64, out_channels=128, kernel_size=3)
         self.flatten = nn.Flatten()
-        self.fc1 = nn.Linear(128*11, 64) # 이건 뭐지?
-        self.fc2 = nn.Linear(64, 1)
+        self.dropout = nn.Dropout(p=0.5) # 과적합 방지
+        self.linear1 = nn.Linear(76544, 64)
+        self.linear2 = nn.Linear(64, 1)
         self.sigmoid = nn.Sigmoid()
 
     def forward(self, x):
         x = self.pool(torch.relu(self.conv1(x)))
         x = self.pool(torch.relu(self.conv2(x)))
         x = self.flatten(x)
-        x = torch.relu(self.fc1(x))
-        x = self.sigmoid(self.fc2(x))
+        x = self.dropout(x)
+        x = torch.relu(self.linear1(x))
+        x = self.sigmoid(self.linear2(x))
         return x
     
 model = EEG_CNN()
 print(model)
 
-criterion = nn.BCELoss()
-optimizer = torch.optim.Adam(model.parameters(), lr=0.01)
+criterion = nn.CrossEntropyLoss()
+optimizer = torch.optim.SGD(model.parameters(), lr=0.01) # 학습률 조정함
 
-num_epochs = 10
+num_epochs = 50
 
 for epoch in range(num_epochs):
     model.train()
-    for inputs, targets in dataloader:
+    for inputs, targets in train_loader:
         # Forward pass
         outputs = model(inputs)
         loss = criterion(outputs.squeeze(), targets)
@@ -261,16 +286,6 @@ for epoch in range(num_epochs):
     
     print(f'Epoch [{epoch+1}/{num_epochs}], Loss: {loss.item():.4f}')
 
-test_data = np.random.rand(20, 50, 10).astype(np.float32)
-test_labels = np.random.randint(2, size=20).astype(np.float32)
-
-# PyTorch Tensor로 변환
-test_data_tensor = torch.tensor(test_data).permute(0, 2, 1)
-test_labels_tensor = torch.tensor(test_labels)
-
-# DataLoader 생성
-test_dataset = TensorDataset(test_data_tensor, test_labels_tensor)
-test_dataloader = DataLoader(test_dataset, batch_size=16, shuffle=False)
 
 # 모델 평가
 model.eval()
@@ -278,14 +293,14 @@ with torch.no_grad():
     test_loss = 0
     correct = 0
     total = 0
-    for inputs, targets in test_dataloader:
+    for inputs, targets in test_loader:
         outputs = model(inputs)
         test_loss += criterion(outputs.squeeze(), targets).item()
         predicted = (outputs.squeeze() > 0.5).float()
         total += targets.size(0)
         correct += (predicted == targets).sum().item()
     
-    print(f'Test Loss: {test_loss / len(test_dataloader):.4f}')
+    print(f'Test Loss: {test_loss / len(test_loader):.4f}')
     print(f'Test Accuracy: {correct / total:.4f}')
 
 plt.show()
