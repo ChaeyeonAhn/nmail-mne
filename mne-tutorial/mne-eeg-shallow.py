@@ -293,11 +293,14 @@ class ShallowConvNet(nn.Module):
 
         self.dropout1 = nn.Dropout(p=dropout_prob)
         # Drop out with probability 0.3 to prevent 과적합
+        # Randomly zero out entire channels.
 
         # self.conv_class = nn.Conv2d(200,2,kernel_size=(1,9))
         self.flatten = nn.Flatten()
         self.fc = nn.Linear(last_size, output_dim)  # input length 500->1080, 750->1760, 1000->2440, 1125 -> 2760
-        self.softmax = nn.LogSoftmax(dim=1)
+        # self.softmax = nn.LogSoftmax(dim=1)
+        # 로소맥을 마지막에 쓰지 않는 이유는 
+        # 이미 loss function (CrossEntropyLoss가 LogSoftMax를 안에 포함하고 있기 때문)
 
     def forward(self, input):
         if len(input.shape)==3:
@@ -318,9 +321,10 @@ class ShallowConvNet(nn.Module):
         x = self.flatten(x)
         # print(x.shape)
         output = self.fc(x)
+        # print(output.shape) # (8, 4)
         return output
 
-def train_model(model, train_loader, criterion, optimizer):
+def train_model(model, train_loader, criterion, optimizer): 
     model.train()
     running_loss = 0.0
     for inputs, targets in train_loader:
@@ -386,6 +390,6 @@ avg_test_loss = np.mean([result[0] for result in kfold_results])
 avg_test_accuracy = np.mean([result[1] for result in kfold_results])
 
 print(f'Average Test Loss: {avg_test_loss:.4f}')
-print(f'Average Test Accuracy: {avg_test_accuracy:.4f}')
+print(f'Average Test Accuracy: {avg_test_accuracy * 100:.4f}%')
 
 plt.show()
