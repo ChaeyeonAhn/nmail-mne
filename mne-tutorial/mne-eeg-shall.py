@@ -229,8 +229,10 @@ def normalize_data(data):
     return normalized_data
 
 data = standardize_data(new_epoch.get_data())
-data = normalize_data(data) # 둘 다 하니까 0%는 좀 심한데
+data = normalize_data(data) 
+print(data.shape)
 
+################# 여기 코드는 그냥 normalized data를 그려보고 싶어서 쓴 것
 channels = ['F5', 'FC5', 'C5', 'CP5', 'P5', 'FC3', 'C3', 'CP3', 'P3', 'F1', 'FC1', 'C1', 'CP1', 'P1', 'Cz', 'CPz', 'Pz', 'F2', 'FC2', 'C2', 'CP2', 'P2', 'FC4', 'C4', 'CP4', 'P4', 'F6', 'FC6', 'C6', 'CP6', 'P6']
 n_channels = len(channels)
 ch_types = ['eeg'] * n_channels
@@ -243,12 +245,14 @@ event_id = {'Rest': 0, 'RightHand': 1, 'LeftHand': 2, 'Feet': 3}
 
 normstan_epoch = mne.EpochsArray(data1, info, events, tmin=0, event_id=event_id)
 # normstan_epoch.plot(n_epochs=1, scalings = {"eeg": 500}, show=True, n_channels=32, event_color=dict({-1: "blue", 1: "red", 2: "yellow", 3: "green"}))
+#####################################
 
+# Randomly split the data
 kf = KFold(n_splits=5, shuffle=True, random_state=42)
 
 ### 전처리한 Epoch Array 형태의 EEG 데이터를 tensor 형태로 변환
 data_tensor = torch.tensor(data, dtype=torch.float32) # 얘는 이폭 어레이
-labels_tensor = torch.tensor(label_array, dtype=torch.float32) # 얘는 넘파이 상태
+labels_tensor = torch.tensor(label_array, dtype=torch.int64) # 얘는 넘파이 상태
 # data_tensor = data_tensor.permute(0, 2, 1)
 dataset = TensorDataset(data_tensor, labels_tensor)
 train_size = int(0.6 * len(dataset))
@@ -258,33 +262,70 @@ train_dataset, test_dataset = random_split(dataset, [train_size, test_size])
 train_loader = DataLoader(train_dataset, batch_size=8, shuffle=True)
 test_loader = DataLoader(test_dataset, batch_size=8, shuffle=True)
 
-class EEG_CNN(nn.Module):
-    def __init__(self):
-        super(EEG_CNN, self).__init__()
-        self.conv1 = nn.Conv1d(in_channels=31, out_channels=64, kernel_size=3)
-        self.pool = nn.MaxPool1d(kernel_size=2)
-        self.conv2 = nn.Conv1d(in_channels=64, out_channels=128, kernel_size=3)
-        self.flatten = nn.Flatten()
-        self.dropout = nn.Dropout(p=0.5) # 과적합 방지
-        self.linear1 = nn.Linear(76544, 64)
-        self.linear2 = nn.Linear(64, 1)
-        self.sigmoid = nn.Sigmoid()
+class ShallowConvNet(nn.Module):
+    def __init__(
+            self,
+            num_channels,  # number of channels
+            output_dim=4,
+            dropout_prob=0.3,
+            last_size=2440
+    ):
+        super(ShallowConvNet, self).__init__()
 
-    def forward(self, x):
-        x = self.pool(torch.relu(self.conv1(x)))
-        x = self.pool(torch.relu(self.conv2(x)))
+        # if pretrain True, modifies intermediate layer output values based on finetune & pretrain channels,
+        # if pretrain False, modifies intermediate layer output values based on self.scale
+        self.last_size = last_size
+
+        self.num_channels = num_channels
+
+        self.conv_temp = nn.Conv2d(1, 40, kernel_size=(1, 25))
+        # 2D convolutional layer for temporal perspective
+
+        self.conv_spat = nn.Conv2d(40, 40, kernel_size=(num_channels, 1), bias=False)
+        # 2D convolutional layer for spatial perspective
+
+        self.batchnorm1 = nn.BatchNorm2d(40, momentum=0.1, affine=True, eps=1e-5)
+        # Batch normalization 
+        # 데이터의 zero mean, unit variance를 맞추고 data equal contribute 하게끔
+
+        self.avgpool1 = nn.AvgPool2d(kernel_size=(1, 75), stride=(1, 15))
+        # Mean pooling.
+
+        self.dropout1 = nn.Dropout(p=dropout_prob)
+        # Drop out with probability 0.3 to prevent 과적합
+
+        # self.conv_class = nn.Conv2d(200,2,kernel_size=(1,9))
+        self.flatten = nn.Flatten()
+        self.fc = nn.Linear(last_size, output_dim)  # input length 500->1080, 750->1760, 1000->2440, 1125 -> 2760
+        self.softmax = nn.LogSoftmax(dim=1)
+
+    def forward(self, input):
+        if len(input.shape)==3:
+            input = input.unsqueeze(1)
+        # print("input: ", input.shape)
+        x = self.conv_temp(input)
+        # print("conv_temp: ",x.shape)
+        x = self.conv_spat(x)
+        # print("spat_temp: ",x.shape)
+        x = self.batchnorm1(x)
+        x = torch.square(x) # Square linearity
+        # print("b4avgpool: ", x.shape)
+        x = self.avgpool1(x)
+        x = torch.log(torch.clamp(x,min=1e-6))
+        # print("avgpool: ", x.shape)
+        x = self.dropout1(x)
+
         x = self.flatten(x)
-        x = self.dropout(x)
-        x = torch.relu(self.linear1(x))
-        x = self.sigmoid(self.linear2(x))
-        return x
+        # print(x.shape)
+        output = self.fc(x)
+        return output
 
 def train_model(model, train_loader, criterion, optimizer):
     model.train()
     running_loss = 0.0
     for inputs, targets in train_loader:
         outputs = model(inputs)
-        loss = criterion(outputs.squeeze(), targets)
+        loss = criterion(outputs, targets)
         
         optimizer.zero_grad()
         loss.backward()
@@ -302,9 +343,10 @@ def evaluate_model(model, test_loader, criterion):
     with torch.no_grad():
         for inputs, targets in test_loader:
             outputs = model(inputs)
-            loss = criterion(outputs.squeeze(), targets)
+            loss = criterion(outputs, targets)
             test_loss += loss.item()
-            predicted = (outputs.squeeze() > 0.5).float()
+
+            _, predicted = torch.max(outputs, 1)
             total += targets.size(0)
             correct += (predicted == targets).sum().item()
     avg_loss = test_loss / len(test_loader)
@@ -313,7 +355,7 @@ def evaluate_model(model, test_loader, criterion):
 
 # K-Fold Cross-Validation
 kfold_results = []
-model = EEG_CNN()
+model = ShallowConvNet(num_channels=n_channels, last_size=6160)
 criterion = nn.CrossEntropyLoss()
 optimizer = torch.optim.SGD(model.parameters(), lr=0.01)
 

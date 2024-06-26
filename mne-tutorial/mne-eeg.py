@@ -81,13 +81,13 @@ def apply_notch_filter(data, sfreq, freq=60.0, quality_factor=30.0):
     return filtered_data
 
 def epochs_to_relative_psd_topo(epochs, cut_list, file_name='topomap',
-                                event_list=['Rest', 'Right Hand'], save_path='topoplot.png'):
+                                event_list=['Rest', 'RightHand', 'LeftHand', 'Feet'], save_path='topoplot.png'):
     # epochs = epochs.filter(l_freq=l_freq,h_freq=h_freq,method='iir',verbose=False)
     # when 'average', projection=True applies projection with apply_proj, projection=False immediately applies projection to the data
     
     epochs = epochs.set_eeg_reference('average', projection=True,verbose=False)
 
-    fig,ax=plt.subplots(len(event_list)-1, len(cut_list), figsize=(30,30))
+    fig, ax = plt.subplots(len(event_list)-1, len(cut_list), figsize=(30,30))
     fig.suptitle("{}".format(file_name, fontsize=16))
 
     for i, cut_range in enumerate(cut_list):
@@ -98,8 +98,13 @@ def epochs_to_relative_psd_topo(epochs, cut_list, file_name='topomap',
         psd_0, freq_0 = epoch_0.compute_psd(fmin=lowcut, fmax=highcut).get_data(return_freqs=True)
         print(psd_0.shape)
         psd_0 = 10 * np.log10(psd_0)
-        psd_0 = np.mean(psd_0, axis=0) # mean over sample dimension
-        psd_0 = np.mean(psd_0, axis=1) # mean over time dimension
+        psd_0 = np.mean(psd_0, axis=0) # 결과 = (timestamp, channels)
+        # mean over sample dimension
+        # axis = 0: epoch별 데이터, epoch 기준으로 mean 구하기
+
+        psd_0 = np.mean(psd_0, axis=1) # 결과 = (channels,)
+        # mean over time dimension
+        # axis = 1: timestamp별 데이터, timestamp 기준으로 mean 구하기
 
         for j in range(1,len(event_list)):
             epoch_j = epochs[event_list[j]]
@@ -255,7 +260,8 @@ ica.exclude = [1]
 reconst_epoch = new_epoch.copy()
 ica.apply(reconst_epoch)
 
-epochs_to_relative_psd_topo(reconst_epoch, cut_list) # What is this cut_list?
+####################################
+epochs_to_relative_psd_topo(reconst_epoch, [(0.5, 40), (10, 40), (13, 30)]) # What is this cut_list?
 
 # new_epoch.plot(order=artifact_picks, n_channels=len(artifact_picks), show_scrollbars=False)
 # reconst_epoch.plot(
