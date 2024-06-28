@@ -86,7 +86,7 @@ def apply_notch_filter(data, sfreq, freq=60.0, quality_factor=30.0):
 
 # print(os.getcwd())
 
-EEG_array, label_array = import_EEG('[CYA]MI_four_1.txt') # 파일 읽어들이기
+EEG_array, label_array = import_EEG('[CYA]MI_four_5.txt') # 파일 읽어들이기
 new_epoch = EEG_to_epochs(EEG_array, label_array) # 에폭 어레이 형성
 # fig = new_epoch.plot(n_epochs=1, scalings = {"eeg": 500}, show=True, n_channels=32, event_color=dict({-1: "blue", 1: "red", 2: "yellow", 3: "green"})) # 기본적인 EEG 데이터 열람
 # # 이벤트별로 온셋 타이밍 색깔로 보고 싶은데 코드가 적용이 안 되나 봄
@@ -280,6 +280,7 @@ class ShallowConvNet(nn.Module):
 
         self.conv_temp = nn.Conv2d(1, 40, kernel_size=(1, 25))
         # 2D convolutional layer for temporal perspective
+        # 여기서 bias 추가
 
         self.conv_spat = nn.Conv2d(40, 40, kernel_size=(num_channels, 1), bias=False)
         # 2D convolutional layer for spatial perspective
@@ -287,6 +288,7 @@ class ShallowConvNet(nn.Module):
         self.batchnorm1 = nn.BatchNorm2d(40, momentum=0.1, affine=True, eps=1e-5)
         # Batch normalization 
         # 데이터의 zero mean, unit variance를 맞추고 data equal contribute 하게끔
+        # 여기서 40은 우리 4D 데이터의 1차원. 0, 1, 2, 3... (필터 수인 듯,,)
 
         self.avgpool1 = nn.AvgPool2d(kernel_size=(1, 75), stride=(1, 15))
         # Mean pooling.
@@ -316,12 +318,12 @@ class ShallowConvNet(nn.Module):
         x = self.avgpool1(x)
         x = torch.log(torch.clamp(x,min=1e-6))
         # print("avgpool: ", x.shape)
-        x = self.dropout1(x)
+        x = self.dropout1(x) # 특정 확률로 랜덤하게 채널 비활성화
 
         x = self.flatten(x)
         # print(x.shape)
         output = self.fc(x)
-        # print(output.shape) # (8, 4)
+        # print(output.shape) # (8, 4) 배치 당 네 개 인듯,,
         return output
 
 def train_model(model, train_loader, criterion, optimizer): 
@@ -359,6 +361,7 @@ def evaluate_model(model, test_loader, criterion):
 
 # K-Fold Cross-Validation
 kfold_results = []
+train_results = [] # 학습 곡선 보고 싶어서
 model = ShallowConvNet(num_channels=n_channels, last_size=6160)
 criterion = nn.CrossEntropyLoss()
 optimizer = torch.optim.SGD(model.parameters(), lr=0.01)
@@ -377,6 +380,7 @@ for fold, (train_index, test_index) in enumerate(kf.split(dataset)):
     num_epochs = 50
     for epoch in range(num_epochs):
         train_loss = train_model(model, train_loader, criterion, optimizer)
+        train_results.append(train_loss) # 학습 곡선 보고 싶어서
         print(f'Fold: {fold}, Epoch: {epoch}, Train Loss: {train_loss:.4f}')
     
     test_loss, test_accuracy = evaluate_model(model, test_loader, criterion)
@@ -391,5 +395,6 @@ avg_test_accuracy = np.mean([result[1] for result in kfold_results])
 
 print(f'Average Test Loss: {avg_test_loss:.4f}')
 print(f'Average Test Accuracy: {avg_test_accuracy * 100:.4f}%')
+plt.plot(train_results) # 학습 곡선 보고 싶어서
 
 plt.show()
