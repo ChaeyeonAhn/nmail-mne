@@ -52,7 +52,7 @@ def EEG_array_modifier(eeg_array, label_array):
         X.append(np.array(eeg_array[i])) # 2D ndarray 변환하여 삽입
         y.append(label) # 라벨 삽입
         event_timepoints.append(i) # 그냥 숫자 삽입. 결과적으로 0 1 2 3 4 ... 될 것
-    events_array = np.array([[event_timepoints[i], 0, y[i]] for i in range(len(y))])
+    events_array = np.array([np.array([event_timepoints[i], 0, y[i]]) for i in range(len(y))])
     return np.array(X), events_array
 
 def EEG_to_epochs(eeg_array, label_array, sfreq = 500, event_id = {'Rest': 0, 'RightHand': 1, 'LeftHand': 2, 'Feet': 3}):

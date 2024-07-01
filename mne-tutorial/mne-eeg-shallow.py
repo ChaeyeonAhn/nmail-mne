@@ -255,7 +255,7 @@ data_tensor = torch.tensor(data, dtype=torch.float32) # 얘는 이폭 어레이
 labels_tensor = torch.tensor(label_array, dtype=torch.int64) # 얘는 넘파이 상태
 # data_tensor = data_tensor.permute(0, 2, 1)
 dataset = TensorDataset(data_tensor, labels_tensor)
-train_size = int(0.6 * len(dataset))
+train_size = int(0.6 * len(dataset)) # 6:4의 비율로 나눠주기
 test_size = len(dataset) - train_size
 train_dataset, test_dataset = random_split(dataset, [train_size, test_size])
 
@@ -296,6 +296,8 @@ class ShallowConvNet(nn.Module):
         self.dropout1 = nn.Dropout(p=dropout_prob)
         # Drop out with probability 0.3 to prevent 과적합
         # Randomly zero out entire channels.
+        # 드롭 아웃을 0.3 비율로 하면, 막히는 채널 외에 그대로 출력되는 채널에도 전체적으로 1/(1-p) 를 곱해준다고 한다.
+        # 드롭 아웃으로 인해 전체 평균이 줄어들지 않게 하기 위함이라고 함.
 
         # self.conv_class = nn.Conv2d(200,2,kernel_size=(1,9))
         self.flatten = nn.Flatten()
@@ -342,7 +344,8 @@ def train_model(model, train_loader, criterion, optimizer):
     return avg_loss
 
 def evaluate_model(model, test_loader, criterion):
-    model.eval()
+    model.eval() # 이게 모델을 어떤 모드로 설정하느냐에 따라 모델이 조금씩 달라진다.
+    # 특히 이렇게 검증하는 단계에서는 drop out을 안 한다고 했던 것 같다..!
     test_loss = 0
     correct = 0
     total = 0
