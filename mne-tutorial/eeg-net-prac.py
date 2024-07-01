@@ -234,6 +234,18 @@ class EEGNet(nn.Module):
         x = self.flatten(x)
         output = self.fc(x)
         return output
+    
+### 전처리한 Epoch Array 형태의 EEG 데이터를 tensor 형태로 변환
+data_tensor = torch.tensor(epochs, dtype=torch.float32) # 얘는 이폭 어레이
+labels_tensor = torch.tensor(class_return, dtype=torch.int64) # 얘는 넘파이 상태
+# data_tensor = data_tensor.permute(0, 2, 1)
+dataset = TensorDataset(data_tensor, labels_tensor)
+train_size = int(0.6 * len(dataset)) # 6:4의 비율로 나눠주기
+test_size = len(dataset) - train_size
+train_dataset, test_dataset = random_split(dataset, [train_size, test_size])
+
+train_loader = DataLoader(train_dataset, batch_size=8, shuffle=True)
+test_loader = DataLoader(test_dataset, batch_size=8, shuffle=True)
 
 def train_model(model, train_loader, criterion, optimizer): 
     model.train()
@@ -265,7 +277,7 @@ def evaluate_model(model, test_loader, criterion):
             _, predicted = torch.max(outputs, 1)
             total += targets.size(0)
             correct += (predicted == targets).sum().item()
-    avg_loss = test_loss / len(test_loader)
-    accuracy = correct / total
+    avg_loss = test_loss / len(test_loader) # 한 배치에서 손실들의 합 / 배치 개수
+    accuracy = correct / total # 몇 개 맞췄는지 / 몇 개 예상했는지
     return avg_loss, accuracy
 
