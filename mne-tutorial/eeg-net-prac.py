@@ -5,10 +5,12 @@ import torch
 from torch.utils.data import DataLoader, TensorDataset, random_split, Subset
 import mne
 from mne.preprocessing import ICA, corrmap, create_ecg_epochs, create_eog_epochs
+from sklearn.model_selection import ShuffleSplit, cross_val_score, KFold
 
 from sklearn.discriminant_analysis import LinearDiscriminantAnalysis
 from sklearn.preprocessing import StandardScaler, MinMaxScaler
 from sklearn.model_selection import ShuffleSplit, cross_val_score
+from sklearn.metrics import accuracy_score
 from sklearn.pipeline import Pipeline
 from mne import Epochs, pick_types
 from mne.channels import make_standard_montage
@@ -95,6 +97,7 @@ def get_data_2a(subject, training, root_path=DATASET_ROOT+'eeg-net-data/'):
     return np.array(data), np.array(class_return)
 
 data, class_return = get_data_2a(1, True)
+data_test, class_test = get_data_2a(1, False)
 
 def EEG_array_modifier(eeg_array, label_array):
     events_array = np.column_stack((np.arange(len(label_array)), np.zeros(len(label_array), dtype=int), label_array)).astype(int)
@@ -115,7 +118,8 @@ def EEG_to_epochs(eeg_array, label_array, sfreq = 250, event_id = {'LeftHand': 0
     return epochs, events
 
 epochs, events = EEG_to_epochs(data, class_return)
-print(events)
+epochs_test, events_test = EEG_to_epochs(data_test, class_test)
+# print(events)
 
 def epochs_to_relative_psd_topo(epochs, cut_list, file_name='topomap',
                                 event_list=['LeftHand', 'RightHand', 'Feet', 'Tongue'], save_path='topoplot-eegnet.png'):
@@ -148,7 +152,7 @@ def epochs_to_relative_psd_topo(epochs, cut_list, file_name='topomap',
 
     plt.show()
 
-epochs_to_relative_psd_topo(epochs, [(0.5, 40), (10, 40), (13, 30)])
+# epochs_to_relative_psd_topo(epochs, [(0.5, 40), (10, 40), (13, 30)])
 
 def standardize_data(data):
     n_epochs, n_channels, n_timepoints = data.shape
@@ -171,6 +175,9 @@ def normalize_data(data):
 data = standardize_data(epochs.get_data())
 data = normalize_data(data) 
 
+data_test = standardize_data(epochs_test.get_data())
+data_test = normalize_data(data_test)
+
 class EEGNet(nn.Module):
     def __init__(
             self,
@@ -180,9 +187,11 @@ class EEGNet(nn.Module):
             D,
             output_dim=4,
             dropout_prob=0.25, # or 0.5
-            last_size=2440
+            last_size=864
     ):
         super(EEGNet, self).__init__()
+
+        # 그래도 last_size 말고는 디멘션 다 잘 맞았나보다,, 다행유 
 
         self.last_size = last_size # F_2 * 96735 // 32 ???
 
@@ -218,34 +227,45 @@ class EEGNet(nn.Module):
         # print("input: ", input.shape)
         x = self.conv_temp(input)
         # print("conv_temp: ",x.shape)
+
         x = self.batchnorm1(x)
+        # print("batchnorm1: ",x.shape)
         x = self.depth_conv(x)
-        # print("spat_temp: ",x.shape)
+        # print("depth_conv: ",x.shape)
         x = self.batchnorm2(x)
+        # print("batchnorm2: ",x.shape)
         x = self.elu(x)
         x = self.avgpool1(x)
+        # print("avgpool1: ",x.shape)
         x = self.dropout(x)
         x = self.sep_conv1(x)
+        # print("sep_conv1: ",x.shape)
         x = self.sep_conv2(x)
+        # print("sep_conv2: ",x.shape)
         x = self.batchnorm3(x)
+        # print("batchnorm3: ",x.shape)
         x = self.elu(x)
         x = self.avgpool2(x)
+        # print("avgpool2: ",x.shape)
         x = self.dropout(x)
         x = self.flatten(x)
+        # print("flatten: ",x.shape)
         output = self.fc(x)
+        # print("linear: ",output.shape)
         return output
     
-### 전처리한 Epoch Array 형태의 EEG 데이터를 tensor 형태로 변환
-data_tensor = torch.tensor(epochs, dtype=torch.float32) # 얘는 이폭 어레이
+### 전처리(표준, 정규화)한 Epoch Array 형태의 EEG 데이터를 tensor 형태로 
+data_tensor = torch.tensor(data, dtype=torch.float32) # 얘는 이폭 어레이
 labels_tensor = torch.tensor(class_return, dtype=torch.int64) # 얘는 넘파이 상태
 # data_tensor = data_tensor.permute(0, 2, 1)
-dataset = TensorDataset(data_tensor, labels_tensor)
-train_size = int(0.6 * len(dataset)) # 6:4의 비율로 나눠주기
-test_size = len(dataset) - train_size
-train_dataset, test_dataset = random_split(dataset, [train_size, test_size])
+data_t_tensor = torch.tensor(data_test, dtype=torch.float32)
+labels_t_tensor = torch.tensor(class_test, dtype=torch.int64)
+
+test_dataset = TensorDataset(data_t_tensor, labels_t_tensor)
+train_dataset = TensorDataset(data_tensor, labels_tensor)
 
 train_loader = DataLoader(train_dataset, batch_size=8, shuffle=True)
-test_loader = DataLoader(test_dataset, batch_size=8, shuffle=True)
+eval_loader = DataLoader(test_dataset, batch_size=8, shuffle=True)
 
 def train_model(model, train_loader, criterion, optimizer): 
     model.train()
@@ -281,3 +301,76 @@ def evaluate_model(model, test_loader, criterion):
     accuracy = correct / total # 몇 개 맞췄는지 / 몇 개 예상했는지
     return avg_loss, accuracy
 
+###########################################################################
+# 그냥 250번 학습한 뒤, 검증 46%
+results = []
+model = EEGNet(num_channels=22, F_1=8, F_2=16, D=2, last_size=864)
+criterion = nn.CrossEntropyLoss()
+optimizer = torch.optim.SGD(model.parameters(), lr=0.01, momentum=0.9)
+
+num_epochs = 150
+for epoch in range(num_epochs):
+    train_loss = train_model(model, train_loader, criterion, optimizer)
+    print(f'Epoch: {epoch}, Train Loss: {train_loss:.4f}')
+
+test_loss, test_accuracy = evaluate_model(model, eval_loader, criterion)
+results.append((test_loss, test_accuracy))
+
+avg_test_loss = np.mean([result[0] for result in results])
+avg_test_accuracy = np.mean([result[1] for result in results])
+
+print(f'Average Test Loss: {avg_test_loss:.4f}')
+print(f'Average Test Accuracy: {avg_test_accuracy * 100:.4f}%')
+
+plt.show()
+
+#############################################################################
+# 폴드 5개 교차 검증 후 검증 54%
+kf = KFold(n_splits=5, shuffle=True, random_state=42)
+kf_results = []
+eval_results = []
+model = EEGNet(num_channels=22, F_1=8, F_2=16, D=2, last_size=864)
+criterion = nn.CrossEntropyLoss()
+optimizer = torch.optim.SGD(model.parameters(), lr=0.01, momentum=0.9)
+
+# 학습 셋으로 교차 검증 후 검증 데이터로 검증..?!
+# 학습 데이터로 교차 검증을 하는 의미는 검증 보다 교차에 있는 것 같다. 아마도,,
+
+for fold, (train_index, test_index) in enumerate(kf.split(train_dataset)):
+    train_subset = Subset(train_dataset, train_index)
+    test_subset = Subset(train_dataset, test_index) # 학습 데이터셋을 나눠 놓은 상황
+    
+    train_loader = DataLoader(train_subset, batch_size=8, shuffle=True)
+    test_loader = DataLoader(test_subset, batch_size=8, shuffle=False)
+    
+    if fold > 0:
+        # 이전 폴드의 모델 상태 불러오기 (축적되는 학습을 하고 싶어서,,)
+        model.load_state_dict(torch.load(f'model_fold_{fold-1}.pt'))
+
+    num_epochs = 50
+    for epoch in range(num_epochs):
+        train_loss = train_model(model, train_loader, criterion, optimizer)
+        print(f'Fold: {fold}, Epoch: {epoch}, Train Loss: {train_loss:.4f}')
+    
+    test_loss, test_accuracy = evaluate_model(model, test_loader, criterion)
+    kf_results.append((test_loss, test_accuracy))
+    plt.plot(kf_results) # 검증 데이터로 알아본 모델의 성능을 그래프로 나타내고자!
+    
+    # 현재 폴드의 모델 상태 저장 (다음에 불러 쓸 수 있게)
+    torch.save(model.state_dict(), f'model_fold_{fold}.pt')
+    # state_dict() : 파라미터와 값을 매핑하는 dictionary
+
+eval_loss, eval_accuracy = evaluate_model(model, eval_loader, criterion)
+eval_results.append((eval_loss, eval_accuracy))
+
+avg_test_loss = np.mean([result[0] for result in kf_results])
+avg_test_accuracy = np.mean([result[1] for result in kf_results])
+avg_eval_loss = np.mean([result[0] for result in eval_results])
+avg_eval_accuracy = np.mean([result[1] for result in eval_results])
+
+print(f'Average KF Test Loss: {avg_test_loss:.4f}')
+print(f'Average KF Test Accuracy: {avg_test_accuracy:.4f}')
+print(f'Average Eval Loss: {avg_eval_loss:.4f}')
+print(f'Average Eval Accuracy: {avg_eval_accuracy:.4f}')
+
+plt.show()
