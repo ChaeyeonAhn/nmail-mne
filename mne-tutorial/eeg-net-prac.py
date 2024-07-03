@@ -96,8 +96,37 @@ def get_data_2a(subject, training, root_path=DATASET_ROOT+'eeg-net-data/'):
 
     return np.array(data), np.array(class_return)
 
-data, class_return = get_data_2a(1, True)
-data_test, class_test = get_data_2a(1, False)
+data1, class_return1 = get_data_2a(1, True)
+data2, class_return2 = get_data_2a(2, True)
+data3, class_return3 = get_data_2a(3, True)
+data4, class_return4 = get_data_2a(4, True)
+data5, class_return5 = get_data_2a(5, True)
+data6, class_return6 = get_data_2a(6, True)
+data7, class_return7 = get_data_2a(7, True)
+data8, class_return8 = get_data_2a(8, True)
+data9, class_return9 = get_data_2a(9, True)
+# data = np.concatenate((data1, data2, data3, data4, data5, data6, data7, data8, data9))
+# class_return = np.concatenate((class_return1, class_return2, class_return3, class_return4, class_return5, class_return6, class_return7, class_return8, class_return9))
+
+data = np.concatenate((data1, data2, data3, data4, data5, data6, data7, data8))
+class_return = np.concatenate((class_return1, class_return2, class_return3, class_return4, class_return5, class_return6, class_return7, class_return8))
+
+data_test1, class_test1 = get_data_2a(1, False)
+data_test2, class_test2 = get_data_2a(2, False)
+data_test3, class_test3 = get_data_2a(3, False)
+data_test4, class_test4 = get_data_2a(4, False)
+data_test5, class_test5 = get_data_2a(5, False)
+data_test6, class_test6 = get_data_2a(6, False)
+data_test7, class_test7 = get_data_2a(7, False)
+data_test8, class_test8 = get_data_2a(8, False)
+data_test9, class_test9 = get_data_2a(9, False)
+# data_test = np.concatenate((data_test1, data_test2, data_test3, data_test4, data_test5, data_test6, data_test7, data_test8, data_test9))
+# class_test = np.concatenate((class_test1, class_test2, class_test3, class_test4, class_test5, class_test6, class_test7, class_test8, class_test9))
+
+# 1명 데이터만 가지고 실험 ?!
+data_test = data_test9
+class_test = class_test9
+
 
 def EEG_array_modifier(eeg_array, label_array):
     events_array = np.column_stack((np.arange(len(label_array)), np.zeros(len(label_array), dtype=int), label_array)).astype(int)
@@ -261,11 +290,11 @@ labels_tensor = torch.tensor(class_return, dtype=torch.int64) # 얘는 넘파이
 data_t_tensor = torch.tensor(data_test, dtype=torch.float32)
 labels_t_tensor = torch.tensor(class_test, dtype=torch.int64)
 
-test_dataset = TensorDataset(data_t_tensor, labels_t_tensor)
 train_dataset = TensorDataset(data_tensor, labels_tensor)
+test_dataset = TensorDataset(data_t_tensor, labels_t_tensor)
 
-train_loader = DataLoader(train_dataset, batch_size=8, shuffle=True)
-eval_loader = DataLoader(test_dataset, batch_size=8, shuffle=True)
+train_loader = DataLoader(train_dataset, batch_size=8, shuffle=True) # 훈련 시 쓸 데이터
+eval_loader = DataLoader(test_dataset, batch_size=8, shuffle=True) # 검증 데이터
 
 def train_model(model, train_loader, criterion, optimizer): 
     model.train()
@@ -282,14 +311,14 @@ def train_model(model, train_loader, criterion, optimizer):
     avg_loss = running_loss / len(train_loader)
     return avg_loss
 
-def evaluate_model(model, test_loader, criterion):
+def evaluate_model(model, eval_loader, criterion):
     model.eval() # 이게 모델을 어떤 모드로 설정하느냐에 따라 모델이 조금씩 달라진다.
     # 특히 이렇게 검증하는 단계에서는 drop out을 안 한다고 했던 것 같다..!
     test_loss = 0
     correct = 0
     total = 0
     with torch.no_grad():
-        for inputs, targets in test_loader:
+        for inputs, targets in eval_loader:
             outputs = model(inputs)
             loss = criterion(outputs, targets)
             test_loss += loss.item()
@@ -301,34 +330,12 @@ def evaluate_model(model, test_loader, criterion):
     accuracy = correct / total # 몇 개 맞췄는지 / 몇 개 예상했는지
     return avg_loss, accuracy
 
-###########################################################################
-# 그냥 250번 학습한 뒤, 검증 46%
-results = []
-model = EEGNet(num_channels=22, F_1=8, F_2=16, D=2, last_size=864)
-criterion = nn.CrossEntropyLoss()
-optimizer = torch.optim.SGD(model.parameters(), lr=0.01, momentum=0.9)
-
-num_epochs = 150
-for epoch in range(num_epochs):
-    train_loss = train_model(model, train_loader, criterion, optimizer)
-    print(f'Epoch: {epoch}, Train Loss: {train_loss:.4f}')
-
-test_loss, test_accuracy = evaluate_model(model, eval_loader, criterion)
-results.append((test_loss, test_accuracy))
-
-avg_test_loss = np.mean([result[0] for result in results])
-avg_test_accuracy = np.mean([result[1] for result in results])
-
-print(f'Average Test Loss: {avg_test_loss:.4f}')
-print(f'Average Test Accuracy: {avg_test_accuracy * 100:.4f}%')
-
-plt.show()
-
 #############################################################################
 # 폴드 5개 교차 검증 후 검증 54%
+
 kf = KFold(n_splits=5, shuffle=True, random_state=42)
 kf_results = []
-eval_results = []
+eval_results = [] # test data로 검증한 결과
 model = EEGNet(num_channels=22, F_1=8, F_2=16, D=2, last_size=864)
 criterion = nn.CrossEntropyLoss()
 optimizer = torch.optim.SGD(model.parameters(), lr=0.01, momentum=0.9)
