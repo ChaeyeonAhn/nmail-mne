@@ -99,6 +99,7 @@ def get_data_2a(subject, training, root_path=DATASET_ROOT+'eeg-net-data/'):
 
     return np.array(data), np.array(class_return)
 
+# 이거 한 명씩 훈련하고 그 사람에게 검증하는 거래..!! 
 data1, class_return1 = get_data_2a(1, True)
 # print(len(data1[0]))
 # print(class_return1)
