@@ -114,8 +114,10 @@ data9, class_return9 = get_data_2a(9, True)
 # data = np.concatenate((data1, data2, data3, data4, data5, data6, data7, data8, data9))
 # class_return = np.concatenate((class_return1, class_return2, class_return3, class_return4, class_return5, class_return6, class_return7, class_return8, class_return9))
 
-data = np.concatenate((data1, data2, data3, data4, data5, data6, data7, data8, data9))
-class_return = np.concatenate((class_return1, class_return2, class_return3, class_return4, class_return5, class_return6, class_return7, class_return8, class_return9))
+# data = np.concatenate((data1, data2, data3, data4, data5, data6, data7, data8, data9))
+# class_return = np.concatenate((class_return1, class_return2, class_return3, class_return4, class_return5, class_return6, class_return7, class_return8, class_return9))
+data = data2
+class_return = class_return2
 
 data_test1, class_test1 = get_data_2a(1, False)
 data_test2, class_test2 = get_data_2a(2, False)
@@ -126,12 +128,12 @@ data_test6, class_test6 = get_data_2a(6, False)
 data_test7, class_test7 = get_data_2a(7, False)
 data_test8, class_test8 = get_data_2a(8, False)
 data_test9, class_test9 = get_data_2a(9, False)
-data_test = np.concatenate((data_test1, data_test2, data_test3, data_test4, data_test5, data_test6, data_test7, data_test8, data_test9))
-class_test = np.concatenate((class_test1, class_test2, class_test3, class_test4, class_test5, class_test6, class_test7, class_test8, class_test9))
+# data_test = np.concatenate((data_test1, data_test2, data_test3, data_test4, data_test5, data_test6, data_test7, data_test8, data_test9))
+# class_test = np.concatenate((class_test1, class_test2, class_test3, class_test4, class_test5, class_test6, class_test7, class_test8, class_test9))
 
 # 1명 데이터만 가지고 실험 ?!
-# data_test = data_test9
-# class_test = class_test9
+data_test = data_test2
+class_test = class_test2
 
 
 def EEG_array_modifier(eeg_array, label_array):
@@ -330,14 +332,14 @@ def evaluate_model(model, eval_loader, criterion):
             _, predicted = torch.max(outputs, 1)
             total += targets.size(0)
             correct += (predicted == targets).sum().item()
-    avg_loss = test_loss / len(test_loader) # 한 배치에서 손실들의 합 / 배치 개수
+    avg_loss = test_loss / len(eval_loader) # 한 배치에서 손실들의 합 / 배치 개수
     accuracy = correct / total # 몇 개 맞췄는지 / 몇 개 예상했는지
     return avg_loss, accuracy * 100
 
 #############################################################################
 # 폴드 5개 교차 검증 후 검증
 
-kf = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
+kf = KFold(n_splits=5, shuffle=True, random_state=42)
 kf_results = []
 eval_results = [] # test data로 검증한 결과
 model = EEGNet(num_channels=22, F_1=8, F_2=16, D=2, last_size=864)
@@ -365,7 +367,7 @@ for fold, (train_index, test_index) in enumerate(kf.split(data_tensor, labels_te
         train_loss = train_model(model, train_loader, criterion, optimizer)
         print(f'Fold: {fold}, Epoch: {epoch}, Train Loss: {train_loss:.4f}')
         test_loss, test_accuracy = evaluate_model(model, test_loader, criterion)
-        # scheduler.step(test_loss)
+        # scheduler.step(test_loss) 학습률을 알아서 조정
         kf_results.append((test_loss, test_accuracy))
     
     plt.plot(kf_results) # 검증 데이터로 알아본 모델의 성능을 그래프로 나타내고자!
