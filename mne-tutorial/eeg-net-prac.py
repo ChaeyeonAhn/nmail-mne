@@ -56,7 +56,7 @@ def get_data_2a(subject, training, root_path=DATASET_ROOT+'eeg-net-data/'):
     NO_tests = 6 * 48 
 
     # Each session is comprised of 6 runs separated by short breaks. One run consists of 48 trials
-    Window_Length = int(7.5 * 250)
+    Window_Length = int(7.5 * 250) # = 1875
 
     # 미리 최종 데이터 집어넣을 컨테이너 마련 (numpy array)
     class_return = np.zeros(NO_tests)
@@ -87,11 +87,11 @@ def get_data_2a(subject, training, root_path=DATASET_ROOT+'eeg-net-data/'):
         # a_trial.size > 0 means there is data in this run
         for trial in range(0, a_trial.size):
             # remove bad trials which have artifacts
-            if (a_artifacts[trial] == 0):
-                data_return[NO_valid_trial, :, :] = np.transpose(
-                    a_X[int(a_trial[trial]):(int(a_trial[trial]) + Window_Length), :NO_channels]) # 4s pre-trial and 4s post-trial
-                class_return[NO_valid_trial] = int(a_y[trial])
-                NO_valid_trial += 1
+            # if (a_artifacts[trial] == 0):
+            data_return[NO_valid_trial, :, :] = np.transpose(
+                a_X[int(a_trial[trial]):(int(a_trial[trial]) + Window_Length), :NO_channels]) # 4s pre-trial and 4s post-trial
+            class_return[NO_valid_trial] = int(a_y[trial])
+            NO_valid_trial += 1
 
     # index 500~1500 is the imagery time
     data = data_return[0:NO_valid_trial, :, :]
@@ -116,8 +116,21 @@ data9, class_return9 = get_data_2a(9, True)
 
 # data = np.concatenate((data1, data2, data3, data4, data5, data6, data7, data8, data9))
 # class_return = np.concatenate((class_return1, class_return2, class_return3, class_return4, class_return5, class_return6, class_return7, class_return8, class_return9))
+
+# 전체 데이터를 timepoint 를 겹쳐 조금 조금씩 작게 잘라서 다 합쳐서 데이터 증강 -> 다 합치는 게 의미가 있나?
 data = data2
+data2_1 = data2[:, :, 0:400]
+data2_2 = data2[:, :, 295:695]
+data2_3 = data2[:, :, 590:990]
+data2_4 = data2[:, :, 885:1285]
+data2_5 = data2[:, :, 1180:1580]
+data2_6 = data2[:, :, 1475:1875]
+# 라벨은 안 바뀌므로 그냥 6번 더해주기만 하면 됨 trial이 늘어나는 거라고 생각
 class_return = class_return2
+
+# print(data)
+# print(data.shape)
+# print(data[:, :, 0:900])
 
 data_test1, class_test1 = get_data_2a(1, False)
 data_test2, class_test2 = get_data_2a(2, False)
@@ -157,6 +170,12 @@ def EEG_to_epochs(eeg_array, label_array, sfreq = 250, event_id = {'LeftHand': 0
     return epochs, events
 
 epochs, events = EEG_to_epochs(data, class_return)
+epochs1, events = EEG_to_epochs(data2_1, class_return)
+epochs2, events = EEG_to_epochs(data2_2, class_return)
+epochs3, events = EEG_to_epochs(data2_3, class_return)
+epochs4, events = EEG_to_epochs(data2_4, class_return)
+epochs5, events = EEG_to_epochs(data2_5, class_return)
+epochs6, events = EEG_to_epochs(data2_6, class_return)
 epochs_test, events_test = EEG_to_epochs(data_test, class_test)
 # print(events)
 
@@ -212,10 +231,23 @@ def normalize_data(data):
     return normalized_data
 
 data = standardize_data(epochs.get_data())
-data = normalize_data(data) 
+data = normalize_data(data)
 
-plt.plot(data[0])
-plt.show()
+data2_1 = standardize_data(epochs1.get_data())
+data2_2 = standardize_data(epochs2.get_data())
+data2_3 = standardize_data(epochs3.get_data())
+data2_4 = standardize_data(epochs4.get_data())
+data2_5 = standardize_data(epochs5.get_data())
+data2_6 = standardize_data(epochs6.get_data())
+data2_1 = normalize_data(data2_1)
+data2_2 = normalize_data(data2_2)
+data2_3 = normalize_data(data2_3)
+data2_4 = normalize_data(data2_4)
+data2_5 = normalize_data(data2_5)
+data2_6 = normalize_data(data2_6)
+
+# plt.plot(data[0])
+# plt.show()
 
 data_test = standardize_data(epochs_test.get_data())
 data_test = normalize_data(data_test)
@@ -227,13 +259,11 @@ class EEGNet(nn.Module):
             F_1,
             F_2,
             D,
-            output_dim=4,
-            dropout_prob=0.25, # or 0.5
-            last_size=864
+            dropout_prob=0.25 # or 0.5
     ):
         super(EEGNet, self).__init__()
 
-        self.last_size = last_size 
+        # self.last_size = last_size 
         self.num_channels = num_channels
         self.conv_temp = nn.Conv2d(1, F_1, kernel_size=(1, 64), bias=False)
         self.batchnorm1 = nn.BatchNorm2d(F_1, momentum=0.1, affine=True, eps=1e-5)
@@ -248,7 +278,7 @@ class EEGNet(nn.Module):
         self.elu = nn.ELU()
         self.avgpool2 = nn.AvgPool2d(kernel_size=(1, 8))
         self.flatten = nn.Flatten()
-        self.fc = nn.Linear(last_size, output_dim) 
+        self.fc = nn.Linear(128, 4) 
 
     def forward(self, input):
         if len(input.shape)==3:
@@ -289,17 +319,82 @@ class EEGNet(nn.Module):
         # print("linear: ",output.shape)
         return output
     
+class EEGNet2(nn.Module):
+    def __init__(
+            self,
+            num_channels,  # number of channels
+            F_1,
+            F_2,
+            D,
+            dropout_prob=0.25 # or 0.5
+    ):
+        super(EEGNet2, self).__init__()
+
+        self.num_channels = num_channels
+        self.conv_temp = nn.Conv2d(1, F_1, kernel_size=(1, 64), bias=False)
+        self.batchnorm1 = nn.BatchNorm2d(F_1, momentum=0.1, affine=True, eps=1e-5)
+        self.depth_conv = nn.Conv2d(F_1, D*F_1, kernel_size=(num_channels, 1), bias=False, groups=F_1) 
+        # group 수가 입력 채널 수랑 같으면 = depthwise convolution 가능하게 해주는 것
+        self.batchnorm2 = nn.BatchNorm2d(D*F_1, momentum=0.1, affine=True, eps=1e-5)
+        self.avgpool1 = nn.AvgPool2d(kernel_size=(1, 4))
+        self.dropout = nn.Dropout(p=dropout_prob)
+        self.sep_conv1 = nn.Conv2d(D*F_1, D*F_1, kernel_size=(1, 16), bias=False, groups=D*F_1) #sep_1 도 depthwise conv
+        self.sep_conv2 = nn.Conv2d(D*F_1, F_2, kernel_size=(1, 1), bias=False) 
+        self.batchnorm3 = nn.BatchNorm2d(F_2, momentum=0.1, affine=True, eps=1e-5)
+        self.elu = nn.ELU()
+        self.avgpool2 = nn.AvgPool2d(kernel_size=(1, 8))
+        self.flatten = nn.Flatten()
+        self.fc = nn.Linear(864, 4) 
+
+    def forward(self, input):
+        if len(input.shape)==3:
+            input = input.unsqueeze(1)
+        x = self.conv_temp(input)
+
+        x = self.batchnorm1(x) # 어차피 Conv 뒤에 Batch Norm을 쓰기 때문에 Conv에 bias는 소용 없으므로 False라고 한다.
+        x = self.depth_conv(x)
+        x = self.batchnorm2(x)
+        x = self.elu(x)
+        x = self.avgpool1(x)
+        x = self.dropout(x)
+        x = self.sep_conv1(x)
+        x = self.sep_conv2(x)
+        x = self.batchnorm3(x)
+        x = self.elu(x)
+        x = self.avgpool2(x)
+        x = self.dropout(x)
+        x = self.flatten(x)
+        output = self.fc(x)
+        return output
+    
 ### 전처리(표준, 정규화)한 Epoch Array 형태의 EEG 데이터를 tensor 형태로 
-data_tensor = torch.tensor(data, dtype=torch.float32) # 얘는 이폭 어레이
+data_tensor = torch.tensor(data, dtype=torch.float32)
+data2_1tensor = torch.tensor(data2_1, dtype=torch.float32)
+data2_2tensor = torch.tensor(data2_1, dtype=torch.float32)
+data2_3tensor = torch.tensor(data2_1, dtype=torch.float32)
+data2_4tensor = torch.tensor(data2_1, dtype=torch.float32) 
+data2_5tensor = torch.tensor(data2_1, dtype=torch.float32) 
+data2_6tensor = torch.tensor(data2_1, dtype=torch.float32) 
 labels_tensor = torch.tensor(class_return, dtype=torch.int64) # 얘는 넘파이 상태
 # data_tensor = data_tensor.permute(0, 2, 1)
 data_t_tensor = torch.tensor(data_test, dtype=torch.float32)
 labels_t_tensor = torch.tensor(class_test, dtype=torch.int64)
 
 train_dataset = TensorDataset(data_tensor, labels_tensor)
+train_dataset1 = TensorDataset(data2_1tensor, labels_tensor)
+train_dataset2 = TensorDataset(data2_2tensor, labels_tensor)
+train_dataset3 = TensorDataset(data2_3tensor, labels_tensor)
+train_dataset4 = TensorDataset(data2_4tensor, labels_tensor)
+train_dataset5 = TensorDataset(data2_5tensor, labels_tensor)
+train_dataset6 = TensorDataset(data2_6tensor, labels_tensor)
 test_dataset = TensorDataset(data_t_tensor, labels_t_tensor)
 
-train_loader = DataLoader(train_dataset, batch_size=32, shuffle=True) # 훈련 시 쓸 데이터
+train_loader1 = DataLoader(train_dataset1, batch_size=32, shuffle=True) # 훈련 시 쓸 데이터
+train_loader2 = DataLoader(train_dataset2, batch_size=32, shuffle=True) # 훈련 시 쓸 데이터
+train_loader3 = DataLoader(train_dataset3, batch_size=32, shuffle=True) # 훈련 시 쓸 데이터
+train_loader4 = DataLoader(train_dataset4, batch_size=32, shuffle=True) # 훈련 시 쓸 데이터
+train_loader5 = DataLoader(train_dataset5, batch_size=32, shuffle=True) # 훈련 시 쓸 데이터
+train_loader6 = DataLoader(train_dataset6, batch_size=32, shuffle=True) # 훈련 시 쓸 데이터
 eval_loader = DataLoader(test_dataset, batch_size=32, shuffle=True) # 검증 데이터
 
 def train_model(model, train_loader, criterion, optimizer): 
@@ -342,7 +437,7 @@ def evaluate_model(model, eval_loader, criterion):
 kf = KFold(n_splits=5, shuffle=True, random_state=42)
 kf_results = []
 eval_results = [] # test data로 검증한 결과
-model = EEGNet(num_channels=22, F_1=8, F_2=16, D=2, last_size=864)
+model = EEGNet(num_channels=22, F_1=8, F_2=16, D=2)
 criterion = nn.CrossEntropyLoss() # 다중 분류에 쓰는 것
 # criterion = nn.NLLLoss() # 다중 분류에 쓰는 건데, 쓸 거면 모델 마지막에 로소맥 적용해야 함
 optimizer = torch.optim.Adam(model.parameters(), lr=0.01)
@@ -351,33 +446,93 @@ optimizer = torch.optim.Adam(model.parameters(), lr=0.01)
 # 학습 셋으로 교차 검증 후 검증 데이터로 검증..?!
 # 학습 데이터로 교차 검증을 하는 의미는 검증 보다 교차에 있는 것 같다. 아마도,,
 
-for fold, (train_index, test_index) in enumerate(kf.split(data_tensor, labels_tensor)): # 이게 맞나
-    train_subset = Subset(train_dataset, train_index)
-    test_subset = Subset(train_dataset, test_index) # 학습 데이터셋을 나눠 놓은 상황
+# for fold, (train_index, test_index) in enumerate(kf.split(data_tensor, labels_tensor)): # 이게 맞나
+#     train_subset = Subset(train_dataset, train_index)
+#     test_subset = Subset(train_dataset, test_index) # 학습 데이터셋을 나눠 놓은 상황
     
-    train_loader = DataLoader(train_subset, batch_size=32, shuffle=True)
-    test_loader = DataLoader(test_subset, batch_size=32, shuffle=False)
+#     train_loader = DataLoader(train_subset, batch_size=32, shuffle=True)
+#     test_loader = DataLoader(test_subset, batch_size=32, shuffle=False)
     
-    if fold > 0:
-        # 이전 폴드의 모델 상태 불러오기 (축적되는 학습을 하고 싶어서,,)
-        model.load_state_dict(torch.load(f'model_fold_{fold-1}.pt'))
+#     if fold > 0:
+#         # 이전 폴드의 모델 상태 불러오기 (축적되는 학습을 하고 싶어서,,)
+#         model.load_state_dict(torch.load(f'model_fold_{fold-1}.pt'))
 
-    num_epochs = 50
+#     num_epochs = 50
+#     for epoch in range(num_epochs):
+#         train_loss = train_model(model, train_loader, criterion, optimizer)
+#         print(f'Fold: {fold}, Epoch: {epoch}, Train Loss: {train_loss:.4f}')
+#         test_loss, test_accuracy = evaluate_model(model, test_loader, criterion)
+#         # scheduler.step(test_loss) 학습률을 알아서 조정
+#         kf_results.append((test_loss, test_accuracy))
+    
+#     plt.plot(kf_results) # 검증 데이터로 알아본 모델의 성능을 그래프로 나타내고자!
+    
+#     # 현재 폴드의 모델 상태 저장 (다음에 불러 쓸 수 있게)
+#     torch.save(model.state_dict(), f'model_fold_{fold}.pt')
+#     # state_dict() : 파라미터와 값을 매핑하는 dictionary
+
+# eval_loss, eval_accuracy = evaluate_model(model, eval_loader, criterion)
+# eval_results.append((eval_loss, eval_accuracy))
+
+
+# avg_test_loss = np.mean([result[0] for result in kf_results])
+# avg_test_accuracy = np.mean([result[1] for result in kf_results])
+# avg_eval_loss = np.mean([result[0] for result in eval_results])
+# avg_eval_accuracy = np.mean([result[1] for result in eval_results])
+
+# print(f'Average KF Test Loss: {avg_test_loss:.4f}')
+# print(f'Average KF Test Accuracy: {avg_test_accuracy:.4f}')
+# print(f'Average Eval Loss: {avg_eval_loss:.4f}')
+# print(f'Average Eval Accuracy: {avg_eval_accuracy:.4f}%')
+
+# plt.show()
+
+######################################################################################
+# 겹치도록 자른 데이터들로 훈련시켜보기! (교차 검증 X)
+
+for i in range(1, 7):
+    if i>1:
+        model.load_state_dict(torch.load(f'model_fold_{i-1}.pt'))
+    if i==1: train_loader = train_loader1
+    if i==2: train_loader = train_loader2
+    if i==3: train_loader = train_loader3
+    if i==4: train_loader = train_loader4
+    if i==5: train_loader = train_loader5
+    else: train_loader = train_loader6
+
+    num_epochs = 35
     for epoch in range(num_epochs):
         train_loss = train_model(model, train_loader, criterion, optimizer)
-        print(f'Fold: {fold}, Epoch: {epoch}, Train Loss: {train_loss:.4f}')
-        test_loss, test_accuracy = evaluate_model(model, test_loader, criterion)
-        # scheduler.step(test_loss) 학습률을 알아서 조정
-        kf_results.append((test_loss, test_accuracy))
-    
-    plt.plot(kf_results) # 검증 데이터로 알아본 모델의 성능을 그래프로 나타내고자!
-    
-    # 현재 폴드의 모델 상태 저장 (다음에 불러 쓸 수 있게)
-    torch.save(model.state_dict(), f'model_fold_{fold}.pt')
-    # state_dict() : 파라미터와 값을 매핑하는 dictionary
+        print(f'Set: {i}, Epoch: {epoch}, Train Loss: {train_loss:.4f}')
+    torch.save(model.state_dict(), f'model_fold_{i}.pt')
 
-eval_loss, eval_accuracy = evaluate_model(model, eval_loader, criterion)
+model.load_state_dict(torch.load(f'model_fold_6.pt'))
+original_params = model.state_dict()
+# print(original_params)
+
+new_model = EEGNet2(F_1=8, F_2=16, D=2, num_channels=22)
+new_model.batchnorm1.weight.data = original_params['batchnorm1.weight']
+new_model.batchnorm1.bias.data = original_params['batchnorm1.bias']
+new_model.depth_conv.weight.data = original_params['depth_conv.weight']
+# new_model.depth_conv.bias.data = original_params['depth_conv.bias']
+new_model.batchnorm2.weight.data = original_params['batchnorm2.weight']
+new_model.batchnorm2.bias.data = original_params['batchnorm2.bias']
+new_model.batchnorm3.weight.data = original_params['batchnorm3.weight']
+new_model.batchnorm3.bias.data = original_params['batchnorm3.bias']
+# new_model.elu.weight.data = original_params['elu.weight']
+# new_model.elu.bias.data = original_params['elu.bias']
+new_model.sep_conv1.weight.data = original_params['sep_conv1.weight']
+# new_model.sep_conv1.bias.data = original_params['sep_conv1.bias']
+new_model.sep_conv2.weight.data = original_params['sep_conv2.weight']
+# new_model.sep_conv2.bias.data = original_params['sep_conv2.bias']
+# new_model.avgpool1.weight.data = original_params['avgpool1.weight']
+# new_model.avgpool2.weight.data = original_params['avgpool1.weight']
+# new_model.fc.weight.data = original_params['fc.weight'] 이거는 원래대로..!!!! 864로 바꾸어 놨는데 다시 384 하면 안되징
+# new_model.fc.bias.data = original_params['fc.bias']
+
+eval_loss, eval_accuracy = evaluate_model(new_model, eval_loader, criterion)
 eval_results.append((eval_loss, eval_accuracy))
+
 
 avg_test_loss = np.mean([result[0] for result in kf_results])
 avg_test_accuracy = np.mean([result[1] for result in kf_results])
