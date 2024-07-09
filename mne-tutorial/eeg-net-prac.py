@@ -82,7 +82,6 @@ def get_data_2a(subject, training, root_path=DATASET_ROOT+'eeg-net-data/'):
         # a_trial.size > 0 means there is data in this run
         for trial in range(0, a_trial.size):
             # remove bad trials which have artifacts
-            # if (a_artifacts[trial] == 0):
             data_return[NO_valid_trial, :, :] = np.transpose(
                 a_X[int(a_trial[trial]):(int(a_trial[trial]) + Window_Length), :NO_channels]) # 4s pre-trial and 4s post-trial
             class_return[NO_valid_trial] = int(a_y[trial])
@@ -145,6 +144,21 @@ epochs_test, events_test = EEG_to_epochs(data_test, class_test)
 # Band Pass filtering (0.5 - 100)
 epochs = epochs.filter(l_freq=0.5, h_freq=100)
 epochs_test = epochs_test.filter(l_freq=0.5, h_freq=100)
+# fig = epochs.compute_psd(fmax=125, method="welch", n_fft=1000).plot(
+#     average=True, amplitude=False, exclude="bads"
+# )
+# plt.show()
+
+def apply_notch_filter(data, sfreq, freq=60.0, quality_factor=30.0):
+
+    # 노치 필터의 주파수와 품질 인자 설정
+    # 60Hz는 전원선 노이즈
+    b, a = iirnotch(w0=freq, Q=quality_factor, fs=sfreq)
+    filtered_data = filtfilt(b, a, data, axis=-1)
+    return filtered_data
+
+data = apply_notch_filter(epochs.get_data(), 250, 50, 30)
+data = apply_notch_filter(data, 250, 100, 30)
 
 def standardize_data(data):
     n_epochs, n_channels, n_timepoints = data.shape
@@ -166,11 +180,19 @@ def normalize_data(data):
 
 ##############################################
 # Training Data stan + norm
-data = standardize_data(epochs.get_data())
+data = standardize_data(data)
 data = normalize_data(data)
 # Testing Data stan + norm
 data_test = standardize_data(epochs_test.get_data())
 data_test = normalize_data(data_test)
+
+plt.plot(data[0])
+data, label = EEG_to_epochs(data, class_return)
+fig = data.compute_psd(fmax=125, method="welch", n_fft=1000).plot(
+    average=True, amplitude=False, exclude="bads"
+)
+plt.show()
+data = data.get_data()
 
 ################################################
 # Slicing data into small overlapping pieces
@@ -389,12 +411,18 @@ original_params = model.state_dict()
 new_model = EEGNet2(F_1=8, F_2=16, D=2, num_channels=22)
 new_model.batchnorm1.weight.data = original_params['batchnorm1.weight']
 new_model.batchnorm1.bias.data = original_params['batchnorm1.bias']
+new_model.batchnorm1.running_mean = original_params['batchnorm1.running_mean']
+new_model.batchnorm1.running_var = original_params['batchnorm1.running_var']
 new_model.depth_conv.weight.data = original_params['depth_conv.weight']
 # new_model.depth_conv.bias.data = original_params['depth_conv.bias']
 new_model.batchnorm2.weight.data = original_params['batchnorm2.weight']
 new_model.batchnorm2.bias.data = original_params['batchnorm2.bias']
+new_model.batchnorm2.running_mean = original_params['batchnorm2.running_mean']
+new_model.batchnorm2.running_var = original_params['batchnorm2.running_var']
 new_model.batchnorm3.weight.data = original_params['batchnorm3.weight']
 new_model.batchnorm3.bias.data = original_params['batchnorm3.bias']
+new_model.batchnorm3.running_mean = original_params['batchnorm3.running_mean']
+new_model.batchnorm3.running_var = original_params['batchnorm3.running_var']
 # new_model.elu.weight.data = original_params['elu.weight']
 # new_model.elu.bias.data = original_params['elu.bias']
 new_model.sep_conv1.weight.data = original_params['sep_conv1.weight']
