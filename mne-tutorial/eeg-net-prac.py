@@ -98,27 +98,20 @@ data2, class_return2 = get_data_2a(2, True)
 data3, class_return3 = get_data_2a(3, True)
 data4, class_return4 = get_data_2a(4, True)
 data5, class_return5 = get_data_2a(5, True)
-# data6, class_return6 = get_data_2a(6, True)
-# data7, class_return7 = get_data_2a(7, True)
-# data8, class_return8 = get_data_2a(8, True)
-# data9, class_return9 = get_data_2a(9, True)
-
-data = data5
-class_return = class_return5
-data = data[:, :, 500:1500]
+data6, class_return6 = get_data_2a(6, True)
+data7, class_return7 = get_data_2a(7, True)
+data8, class_return8 = get_data_2a(8, True)
+data9, class_return9 = get_data_2a(9, True)
 
 data_test1, class_test1 = get_data_2a(1, False)
 data_test2, class_test2 = get_data_2a(2, False)
 data_test3, class_test3 = get_data_2a(3, False)
 data_test4, class_test4 = get_data_2a(4, False)
 data_test5, class_test5 = get_data_2a(5, False)
-# data_test6, class_test6 = get_data_2a(6, False)
-# data_test7, class_test7 = get_data_2a(7, False)
-# data_test8, class_test8 = get_data_2a(8, False)
-# data_test9, class_test9 = get_data_2a(9, False)
-data_test = data_test5
-class_test = class_test5
-data_test = data_test[:, :, 500:1500]
+data_test6, class_test6 = get_data_2a(6, False)
+data_test7, class_test7 = get_data_2a(7, False)
+data_test8, class_test8 = get_data_2a(8, False)
+data_test9, class_test9 = get_data_2a(9, False)
 
 
 def EEG_array_modifier(eeg_array, label_array):
@@ -138,17 +131,6 @@ def EEG_to_epochs(eeg_array, label_array, sfreq = 250, event_id = {'LeftHand': 0
     epochs = mne.EpochsArray(data, info, np.array(events), tmin=0, event_id=event_id)
     return epochs, events
 
-epochs, events = EEG_to_epochs(data, class_return)
-epochs_test, events_test = EEG_to_epochs(data_test, class_test)
-
-################################################
-# Band Pass filtering (0.5 - 100)
-epochs = epochs.filter(l_freq=0.5, h_freq=100)
-epochs_test = epochs_test.filter(l_freq=0.5, h_freq=100)
-# fig = epochs.compute_psd(fmax=125, method="welch", n_fft=1000).plot(
-#     average=True, amplitude=False, exclude="bads"
-# )
-# plt.show()
 
 def apply_notch_filter(data, sfreq, freq=60.0, quality_factor=30.0):
 
@@ -157,12 +139,6 @@ def apply_notch_filter(data, sfreq, freq=60.0, quality_factor=30.0):
     b, a = iirnotch(w0=freq, Q=quality_factor, fs=sfreq)
     filtered_data = filtfilt(b, a, data, axis=-1)
     return filtered_data
-
-data = apply_notch_filter(epochs.get_data(), 250, 50, 30)
-data = apply_notch_filter(data, 250, 100, 30)
-
-data_test = apply_notch_filter(epochs_test.get_data(), 250, 50, 30)
-data_test = apply_notch_filter(data_test, 250, 100, 30)
 
 
 def standardize_data(data):
@@ -182,44 +158,6 @@ def normalize_data(data):
         scaled_data = scaler.fit_transform(data[:, channel, :].T).T
         normalized_data[:, channel, :] = scaled_data
     return normalized_data
-
-##############################################
-# Training Data stan + norm
-data = standardize_data(data)
-data = normalize_data(data)
-# Testing Data stan + norm
-data_test = standardize_data(data_test)
-data_test = normalize_data(data_test)
-
-# plt.plot(data[0])
-# data, label = EEG_to_epochs(data, class_return)
-# fig = data.compute_psd(fmax=125, method="welch", n_fft=1000).plot(
-#     average=True, amplitude=False, exclude="bads"
-# )
-# plt.show()
-# data = data.get_data()
-# data_test = data_test.get_data()
-
-################################################
-# Slicing data into small overlapping pieces
-data0 = data[:, :, 0:900]
-print(data0.shape)
-data1 = data[:, :, 50:950]
-print(data1.shape)
-data2 = data[:, :, 100:1000]
-print(data2.shape)
-
-data_test0 = data_test[:, :, 0:900]
-print(data_test0.shape)
-data_test1 = data_test[:, :, 50:950]
-print(data_test1.shape)
-data_test2 = data_test[:, :, 100:1000]
-print(data_test2.shape)
-
-data = np.concatenate((data0, data1, data2))
-data_test = np.concatenate((data_test0, data_test1, data_test2))
-class_return = np.concatenate((class_return, class_return, class_return))
-class_test = np.concatenate((class_test, class_test, class_test))
 
 class EEGNet(nn.Module):
     def __init__(
@@ -287,36 +225,21 @@ class EEGNet(nn.Module):
         output = self.fc(x)
         # print("linear: ",output.shape)
         return output
-
     
-########################################################
-# Making dataloader
-data_tensor = torch.tensor(data, dtype=torch.float32)
-labels_tensor = torch.tensor(class_return, dtype=torch.int64) # 얘는 넘파이 상태
-
-data_t_tensor = torch.tensor(data_test, dtype=torch.float32)
-labels_t_tensor = torch.tensor(class_test, dtype=torch.int64)
-
-train_dataset = TensorDataset(data_tensor, labels_tensor)
-test_dataset = TensorDataset(data_t_tensor, labels_t_tensor)
-
-train_loader1 = DataLoader(train_dataset, batch_size=32, shuffle=True) # 훈련 시 쓸 데이터
-eval_loader = DataLoader(test_dataset, batch_size=32, shuffle=True) # 검증 데이터
-
 def train_model(model, train_loader, criterion, optimizer): 
-    model.train()
-    running_loss = 0.0
-    for inputs, targets in train_loader:
-        outputs = model(inputs)
-        loss = criterion(outputs, targets)
-        
-        optimizer.zero_grad()
-        loss.backward()
-        optimizer.step()
-        
-        running_loss += loss.item()
-    avg_loss = running_loss / len(train_loader)
-    return avg_loss
+        model.train()
+        running_loss = 0.0
+        for inputs, targets in train_loader:
+            outputs = model(inputs)
+            loss = criterion(outputs, targets)
+            
+            optimizer.zero_grad()
+            loss.backward()
+            optimizer.step()
+            
+            running_loss += loss.item()
+        avg_loss = running_loss / len(train_loader)
+        return avg_loss
 
 def evaluate_model(model, eval_loader, criterion):
     model.eval() # 이게 모델을 어떤 모드로 설정하느냐에 따라 모델이 조금씩 달라진다.
@@ -337,55 +260,171 @@ def evaluate_model(model, eval_loader, criterion):
     accuracy = correct / total # 몇 개 맞췄는지 / 몇 개 예상했는지
     return avg_loss, accuracy
 
-#############################################################################
-# 폴드 5개 교차 검증 후 검증
+final_result = []
+for subject in range(1, 10):
 
-kf = KFold(n_splits=5, shuffle=True, random_state=42)
-kf_results = []
-eval_results = []
-model = EEGNet(num_channels=22, F_1=8, F_2=16, D=2)
-criterion = nn.CrossEntropyLoss()                           
-optimizer = torch.optim.Adam(model.parameters(), lr=0.01)
-
-for fold, (train_index, test_index) in enumerate(kf.split(data_tensor, labels_tensor)): # 이게 맞나
-    train_subset = Subset(train_dataset, train_index)
-    test_subset = Subset(train_dataset, test_index)
+    if subject == 1: 
+        data = data1
+        class_return = class_return1
+        data_test = data_test1
+        class_test = class_test1
+    elif subject == 2: 
+        data = data2
+        class_return = class_return2
+        data_test = data_test2
+        class_test = class_test2
+    elif subject == 3: 
+        data = data3
+        class_return = class_return3
+        data_test = data_test3
+        class_test = class_test3
+    elif subject == 4: 
+        data = data4
+        class_return = class_return4
+        data_test = data_test4
+        class_test = class_test4
+    elif subject == 5: 
+        data = data5
+        class_return = class_return5
+        data_test = data_test5
+        class_test = class_test5
+    elif subject == 6: 
+        data = data6
+        class_return = class_return6
+        data_test = data_test6
+        class_test = class_test6
+    elif subject == 7: 
+        data = data7
+        class_return = class_return7
+        data_test = data_test7
+        class_test = class_test7
+    elif subject == 8: 
+        data = data8
+        class_return = class_return8
+        data_test = data_test8
+        class_test = class_test8
+    else: 
+        data = data9
+        class_return = class_return9
+        data_test = data_test9
+        class_test = class_test9
     
-    train_loader = DataLoader(train_subset, batch_size=32, shuffle=True)
-    test_loader = DataLoader(test_subset, batch_size=32, shuffle=False)
-    
-    if fold > 0:
-        # 이전 폴드의 모델 상태 불러오기 (축적되는 학습을 하고 싶어서,,)
-        model.load_state_dict(torch.load(f'model_fold_{fold-1}.pt'))
+    data = data[:, :, 500:1500]
+    data_test = data_test[:, :, 500:1500]
 
-    num_epochs = 30
-    for epoch in range(num_epochs):
-        train_loss = train_model(model, train_loader, criterion, optimizer)
-        print(f'Fold: {fold}, Epoch: {epoch}, Train Loss: {train_loss:.4f}')
-        test_loss, test_accuracy = evaluate_model(model, test_loader, criterion)
-        # scheduler.step(test_loss) 학습률을 알아서 조정
-        kf_results.append((test_loss, test_accuracy))
-    
-    plt.plot(kf_results) # 검증 데이터로 알아본 모델의 성능을 그래프로 나타내고자!
-    
-    # 현재 폴드의 모델 상태 저장 (다음에 불러 쓸 수 있게)
-    torch.save(model.state_dict(), f'model_fold_{fold}.pt')
-    # state_dict() : 파라미터와 값을 매핑하는 dictionary
+    epochs, events = EEG_to_epochs(data, class_return)
+    epochs_test, events_test = EEG_to_epochs(data_test, class_test)
 
-#############################################################################
-# Testing Model을 따로 쓸 때
-model.load_state_dict(torch.load(f'model_fold_4.pt'))
-eval_loss, eval_accuracy = evaluate_model(model, eval_loader, criterion)
-eval_results.append((eval_loss, eval_accuracy))
+    ################################################
+    # Band Pass filtering (0.5 - 100)
+    epochs = epochs.filter(l_freq=0.5, h_freq=100)
+    epochs_test = epochs_test.filter(l_freq=0.5, h_freq=100)
 
-avg_test_loss = np.mean([result[0] for result in kf_results])
-avg_test_accuracy = np.mean([result[1] for result in kf_results])
-avg_eval_loss = np.mean([result[0] for result in eval_results])
-avg_eval_accuracy = np.mean([result[1] for result in eval_results])
+    data = apply_notch_filter(epochs.get_data(), 250, 50, 30)
+    data = apply_notch_filter(data, 250, 100, 30)
 
-print(f'Average KF Test Loss: {avg_test_loss:.4f}')
-print(f'Average KF Test Accuracy: {avg_test_accuracy:.4f}')
-print(f'Average Eval Loss: {avg_eval_loss:.4f}')
-print(f'Average Eval Accuracy: {avg_eval_accuracy:.4f}')
+    data_test = apply_notch_filter(epochs_test.get_data(), 250, 50, 30)
+    data_test = apply_notch_filter(data_test, 250, 100, 30)
+
+    ##############################################
+    # Training Data stan + norm
+    data = standardize_data(data)
+    data = normalize_data(data)
+    # Testing Data stan + norm
+    data_test = standardize_data(data_test)
+    data_test = normalize_data(data_test)
+
+
+    ################################################
+    # Slicing data into small overlapping pieces
+    data00 = data[:, :, 0:900]
+    print(data00.shape)
+    data01 = data[:, :, 50:950]
+    print(data01.shape)
+    data02 = data[:, :, 100:1000]
+    print(data02.shape)
+
+    data_test00 = data_test[:, :, 0:900]
+    print(data_test00.shape)
+    data_test01 = data_test[:, :, 50:950]
+    print(data_test01.shape)
+    data_test02 = data_test[:, :, 100:1000]
+    print(data_test02.shape)
+
+    data = np.concatenate((data00, data01, data02))
+    data_test = np.concatenate((data_test00, data_test01, data_test02))
+    class_return = np.concatenate((class_return, class_return, class_return))
+    class_test = np.concatenate((class_test, class_test, class_test))
+        
+    ########################################################
+    # Making dataloader
+    data_tensor = torch.tensor(data, dtype=torch.float32)
+    labels_tensor = torch.tensor(class_return, dtype=torch.int64) # 얘는 넘파이 상태
+
+    data_t_tensor = torch.tensor(data_test, dtype=torch.float32)
+    labels_t_tensor = torch.tensor(class_test, dtype=torch.int64)
+
+    train_dataset = TensorDataset(data_tensor, labels_tensor)
+    test_dataset = TensorDataset(data_t_tensor, labels_t_tensor)
+
+    train_loader1 = DataLoader(train_dataset, batch_size=32, shuffle=True) # 훈련 시 쓸 데이터
+    eval_loader = DataLoader(test_dataset, batch_size=32, shuffle=True) # 검증 데이터
+
+    #############################################################################
+    # 폴드 5개 교차 검증 후 검증
+
+    kf = KFold(n_splits=5, shuffle=True, random_state=42)
+    kf_results = []
+    eval_results = []
+    model = EEGNet(num_channels=22, F_1=8, F_2=16, D=2)
+    criterion = nn.CrossEntropyLoss()                           
+    optimizer = torch.optim.Adam(model.parameters(), lr=0.01)
+
+    for fold, (train_index, test_index) in enumerate(kf.split(data_tensor, labels_tensor)): # 이게 맞나
+        train_subset = Subset(train_dataset, train_index)
+        test_subset = Subset(train_dataset, test_index)
+        
+        train_loader = DataLoader(train_subset, batch_size=32, shuffle=True)
+        test_loader = DataLoader(test_subset, batch_size=32, shuffle=False)
+        
+        if fold > 0:
+            # 이전 폴드의 모델 상태 불러오기 (축적되는 학습을 하고 싶어서,,)
+            model.load_state_dict(torch.load(f'model_fold_{fold-1}.pt'))
+
+        num_epochs = 30
+        for epoch in range(num_epochs):
+            train_loss = train_model(model, train_loader, criterion, optimizer)
+            print(f'Subject: {subject}, Fold: {fold}, Epoch: {epoch}, Train Loss: {train_loss:.4f}')
+            test_loss, test_accuracy = evaluate_model(model, test_loader, criterion)
+            # scheduler.step(test_loss) 학습률을 알아서 조정
+            kf_results.append((test_loss, test_accuracy))
+        
+        plt.plot(kf_results) # 검증 데이터로 알아본 모델의 성능을 그래프로 나타내고자!
+        
+        # 현재 폴드의 모델 상태 저장 (다음에 불러 쓸 수 있게)
+        torch.save(model.state_dict(), f'model_fold_{fold}.pt')
+        # state_dict() : 파라미터와 값을 매핑하는 dictionary
+
+    #############################################################################
+    # Testing Model을 따로 쓸 때
+    model.load_state_dict(torch.load(f'model_fold_4.pt'))
+    eval_loss, eval_accuracy = evaluate_model(model, eval_loader, criterion)
+    eval_results.append((eval_loss, eval_accuracy))
+
+    avg_test_loss = np.mean([result[0] for result in kf_results])
+    avg_test_accuracy = np.mean([result[1] for result in kf_results])
+    avg_eval_loss = np.mean([result[0] for result in eval_results])
+    avg_eval_accuracy = np.mean([result[1] for result in eval_results])
+
+    print(f'Subject: {subject}, Average KF Test Loss: {avg_test_loss:.4f}')
+    print(f'Subject: {subject}, Average KF Test Accuracy: {avg_test_accuracy:.4f}')
+    print(f'Subject: {subject},  Eval Loss: {avg_eval_loss:.4f}')
+    print(f'Subject: {subject},  Eval Accuracy: {avg_eval_accuracy:.4f}')
+
+    final_result.append(avg_eval_accuracy)
+
+sum = sum(final_result)
+final_avg = sum / 9
+print('Final 9 Subject test accuracy: {final_avg}')
 
 plt.show()
