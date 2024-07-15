@@ -94,30 +94,31 @@ def get_data_2a(subject, training, root_path=DATASET_ROOT+'eeg-net-data/'):
     return np.array(data), np.array(class_return)
 
 data1, class_return1 = get_data_2a(1, True)
-# data2, class_return2 = get_data_2a(2, True)
-# data3, class_return3 = get_data_2a(3, True)
-# data4, class_return4 = get_data_2a(4, True)
-# data5, class_return5 = get_data_2a(5, True)
+data2, class_return2 = get_data_2a(2, True)
+data3, class_return3 = get_data_2a(3, True)
+data4, class_return4 = get_data_2a(4, True)
+data5, class_return5 = get_data_2a(5, True)
 # data6, class_return6 = get_data_2a(6, True)
 # data7, class_return7 = get_data_2a(7, True)
 # data8, class_return8 = get_data_2a(8, True)
 # data9, class_return9 = get_data_2a(9, True)
 
-data = data1
-class_return = class_return1
+data = data5
+class_return = class_return5
 data = data[:, :, 500:1500]
 
 data_test1, class_test1 = get_data_2a(1, False)
-# data_test2, class_test2 = get_data_2a(2, False)
-# data_test3, class_test3 = get_data_2a(3, False)
-# data_test4, class_test4 = get_data_2a(4, False)
-# data_test5, class_test5 = get_data_2a(5, False)
+data_test2, class_test2 = get_data_2a(2, False)
+data_test3, class_test3 = get_data_2a(3, False)
+data_test4, class_test4 = get_data_2a(4, False)
+data_test5, class_test5 = get_data_2a(5, False)
 # data_test6, class_test6 = get_data_2a(6, False)
 # data_test7, class_test7 = get_data_2a(7, False)
 # data_test8, class_test8 = get_data_2a(8, False)
 # data_test9, class_test9 = get_data_2a(9, False)
-data_test = data_test1
-class_test = class_test1
+data_test = data_test5
+class_test = class_test5
+data_test = data_test[:, :, 500:1500]
 
 
 def EEG_array_modifier(eeg_array, label_array):
@@ -160,6 +161,10 @@ def apply_notch_filter(data, sfreq, freq=60.0, quality_factor=30.0):
 data = apply_notch_filter(epochs.get_data(), 250, 50, 30)
 data = apply_notch_filter(data, 250, 100, 30)
 
+data_test = apply_notch_filter(epochs_test.get_data(), 250, 50, 30)
+data_test = apply_notch_filter(data_test, 250, 100, 30)
+
+
 def standardize_data(data):
     n_epochs, n_channels, n_timepoints = data.shape
     standardized_data = np.zeros((n_epochs, n_channels, n_timepoints))
@@ -183,16 +188,17 @@ def normalize_data(data):
 data = standardize_data(data)
 data = normalize_data(data)
 # Testing Data stan + norm
-data_test = standardize_data(epochs_test.get_data())
+data_test = standardize_data(data_test)
 data_test = normalize_data(data_test)
 
-plt.plot(data[0])
-data, label = EEG_to_epochs(data, class_return)
-fig = data.compute_psd(fmax=125, method="welch", n_fft=1000).plot(
-    average=True, amplitude=False, exclude="bads"
-)
-plt.show()
-data = data.get_data()
+# plt.plot(data[0])
+# data, label = EEG_to_epochs(data, class_return)
+# fig = data.compute_psd(fmax=125, method="welch", n_fft=1000).plot(
+#     average=True, amplitude=False, exclude="bads"
+# )
+# plt.show()
+# data = data.get_data()
+# data_test = data_test.get_data()
 
 ################################################
 # Slicing data into small overlapping pieces
@@ -203,8 +209,17 @@ print(data1.shape)
 data2 = data[:, :, 100:1000]
 print(data2.shape)
 
+data_test0 = data_test[:, :, 0:900]
+print(data_test0.shape)
+data_test1 = data_test[:, :, 50:950]
+print(data_test1.shape)
+data_test2 = data_test[:, :, 100:1000]
+print(data_test2.shape)
+
 data = np.concatenate((data0, data1, data2))
+data_test = np.concatenate((data_test0, data_test1, data_test2))
 class_return = np.concatenate((class_return, class_return, class_return))
+class_test = np.concatenate((class_test, class_test, class_test))
 
 class EEGNet(nn.Module):
     def __init__(
@@ -272,54 +287,7 @@ class EEGNet(nn.Module):
         output = self.fc(x)
         # print("linear: ",output.shape)
         return output
-    
-class EEGNet2(nn.Module):
-    def __init__(
-            self,
-            num_channels,  # number of channels
-            F_1,
-            F_2,
-            D,
-            dropout_prob=0.25 # or 0.5
-    ):
-        super(EEGNet2, self).__init__()
 
-        self.num_channels = num_channels
-        self.conv_temp = nn.Conv2d(1, F_1, kernel_size=(1, 64), bias=False)
-        self.batchnorm1 = nn.BatchNorm2d(F_1, momentum=0.1, affine=True, eps=1e-5)
-        self.depth_conv = nn.Conv2d(F_1, D*F_1, kernel_size=(num_channels, 1), bias=False, groups=F_1) 
-        # group 수가 입력 채널 수랑 같으면 = depthwise convolution 가능하게 해주는 것
-        self.batchnorm2 = nn.BatchNorm2d(D*F_1, momentum=0.1, affine=True, eps=1e-5)
-        self.avgpool1 = nn.AvgPool2d(kernel_size=(1, 4))
-        self.dropout = nn.Dropout(p=dropout_prob)
-        self.sep_conv1 = nn.Conv2d(D*F_1, D*F_1, kernel_size=(1, 16), bias=False, groups=D*F_1) #sep_1 도 depthwise conv
-        self.sep_conv2 = nn.Conv2d(D*F_1, F_2, kernel_size=(1, 1), bias=False) 
-        self.batchnorm3 = nn.BatchNorm2d(F_2, momentum=0.1, affine=True, eps=1e-5)
-        self.elu = nn.ELU()
-        self.avgpool2 = nn.AvgPool2d(kernel_size=(1, 8))
-        self.flatten = nn.Flatten()
-        self.fc = nn.Linear(864, 4) 
-
-    def forward(self, input):
-        if len(input.shape)==3:
-            input = input.unsqueeze(1)
-        x = self.conv_temp(input)
-
-        x = self.batchnorm1(x) # 어차피 Conv 뒤에 Batch Norm을 쓰기 때문에 Conv에 bias는 소용 없으므로 False라고 한다.
-        x = self.depth_conv(x)
-        x = self.batchnorm2(x)
-        x = self.elu(x)
-        x = self.avgpool1(x)
-        x = self.dropout(x)
-        x = self.sep_conv1(x)
-        x = self.sep_conv2(x)
-        x = self.batchnorm3(x)
-        x = self.elu(x)
-        x = self.avgpool2(x)
-        x = self.dropout(x)
-        x = self.flatten(x)
-        output = self.fc(x)
-        return output
     
 ########################################################
 # Making dataloader
@@ -390,7 +358,7 @@ for fold, (train_index, test_index) in enumerate(kf.split(data_tensor, labels_te
         # 이전 폴드의 모델 상태 불러오기 (축적되는 학습을 하고 싶어서,,)
         model.load_state_dict(torch.load(f'model_fold_{fold-1}.pt'))
 
-    num_epochs = 50
+    num_epochs = 30
     for epoch in range(num_epochs):
         train_loss = train_model(model, train_loader, criterion, optimizer)
         print(f'Fold: {fold}, Epoch: {epoch}, Train Loss: {train_loss:.4f}')
@@ -404,39 +372,11 @@ for fold, (train_index, test_index) in enumerate(kf.split(data_tensor, labels_te
     torch.save(model.state_dict(), f'model_fold_{fold}.pt')
     # state_dict() : 파라미터와 값을 매핑하는 dictionary
 
-original_params = model.state_dict()
-
 #############################################################################
 # Testing Model을 따로 쓸 때
-new_model = EEGNet2(F_1=8, F_2=16, D=2, num_channels=22)
-new_model.batchnorm1.weight.data = original_params['batchnorm1.weight']
-new_model.batchnorm1.bias.data = original_params['batchnorm1.bias']
-new_model.batchnorm1.running_mean = original_params['batchnorm1.running_mean']
-new_model.batchnorm1.running_var = original_params['batchnorm1.running_var']
-new_model.depth_conv.weight.data = original_params['depth_conv.weight']
-# new_model.depth_conv.bias.data = original_params['depth_conv.bias']
-new_model.batchnorm2.weight.data = original_params['batchnorm2.weight']
-new_model.batchnorm2.bias.data = original_params['batchnorm2.bias']
-new_model.batchnorm2.running_mean = original_params['batchnorm2.running_mean']
-new_model.batchnorm2.running_var = original_params['batchnorm2.running_var']
-new_model.batchnorm3.weight.data = original_params['batchnorm3.weight']
-new_model.batchnorm3.bias.data = original_params['batchnorm3.bias']
-new_model.batchnorm3.running_mean = original_params['batchnorm3.running_mean']
-new_model.batchnorm3.running_var = original_params['batchnorm3.running_var']
-# new_model.elu.weight.data = original_params['elu.weight']
-# new_model.elu.bias.data = original_params['elu.bias']
-new_model.sep_conv1.weight.data = original_params['sep_conv1.weight']
-# new_model.sep_conv1.bias.data = original_params['sep_conv1.bias']
-new_model.sep_conv2.weight.data = original_params['sep_conv2.weight']
-# new_model.sep_conv2.bias.data = original_params['sep_conv2.bias']
-# new_model.avgpool1.weight.data = original_params['avgpool1.weight']
-# new_model.avgpool2.weight.data = original_params['avgpool1.weight']
-# new_model.fc.weight.data = original_params['fc.weight'] 이거는 원래대로..!!!! 864로 바꾸어 놨는데 다시 384 하면 안되징
-# new_model.fc.bias.data = original_params['fc.bias']
-
-eval_loss, eval_accuracy = evaluate_model(new_model, eval_loader, criterion)
+model.load_state_dict(torch.load(f'model_fold_4.pt'))
+eval_loss, eval_accuracy = evaluate_model(model, eval_loader, criterion)
 eval_results.append((eval_loss, eval_accuracy))
-
 
 avg_test_loss = np.mean([result[0] for result in kf_results])
 avg_test_accuracy = np.mean([result[1] for result in kf_results])
