@@ -425,6 +425,7 @@ for subject in range(1, 10):
 
 sum = sum(final_result)
 final_avg = sum / 9
-print('Final 9 Subject test accuracy: {final_avg}')
+print(final_result)
+print(f'Final 9 Subject test accuracy: {final_avg}')
 
 plt.show()
