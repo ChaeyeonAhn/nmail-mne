@@ -138,9 +138,9 @@ highpass = new_epoch.filter(l_freq=cutoff, h_freq=None)
 # compute_psd returns EpochSpectrum
 # average : averages over channels
 # amplitude : False thus Power spectrum (Amplitude spectrum if True)
-# fig = new_epoch.compute_psd(fmax=250, method="welch", n_fft=4096).plot(
-#     average=True, amplitude=False, exclude="bads"
-# )
+fig = new_epoch.compute_psd(fmax=250, method="welch", n_fft=4096).plot(
+    average=True, amplitude=False, exclude="bads"
+)
 
 # epoch array data에 노치 필터를 적용하고 싶은데 지원하지 않는다고 한다.
 # raw 에 적용한 거 보니까 60 헤르츠 하모닉스에서 파워가 확 감소하는 방향으로 수정됨
@@ -203,7 +203,7 @@ for channel_type, ratio in explained_var_ratio.items():
 # ica.plot_sources(new_epoch, show_scrollbars=False)
 
 # 이 플롯이 각각의 독립 성분의 특성을 다양하게 나타내주므로, 여기서 어떤 것이 노이즈인지를 파악한다. 
-# ica.plot_properties(new_epoch, picks=[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14])
+ica.plot_properties(new_epoch, picks=[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14])
 
 # 어떤 독립 성분을 뺄지 정했으면, ica에 빼는 것으로 등록함
 ica.exclude = [1]
@@ -244,7 +244,7 @@ data1, events = EEG_array_modifier(EEG_array, label_array)
 event_id = {'Rest': 0, 'RightHand': 1, 'LeftHand': 2, 'Feet': 3}
 
 normstan_epoch = mne.EpochsArray(data1, info, events, tmin=0, event_id=event_id)
-# normstan_epoch.plot(n_epochs=1, scalings = {"eeg": 500}, show=True, n_channels=32, event_color=dict({-1: "blue", 1: "red", 2: "yellow", 3: "green"}))
+normstan_epoch.plot(n_epochs=1, scalings = {"eeg": 500}, show=True, n_channels=32)
 #####################################
 
 # Randomly split the data
@@ -344,7 +344,8 @@ def train_model(model, train_loader, criterion, optimizer):
     return avg_loss
 
 def evaluate_model(model, test_loader, criterion):
-    model.eval() # 이게 모델을 어떤 모드로 설정하느냐에 따라 모델이 조금씩 달라진다.
+    model.eval() 
+    # 이게 모델을 어떤 모드로 설정하느냐에 따라 모델이 조금씩 달라진다.
     # 특히 이렇게 검증하는 단계에서는 drop out을 안 한다고 했던 것 같다..!
     test_loss = 0
     correct = 0
