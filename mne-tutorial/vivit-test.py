@@ -6,12 +6,14 @@ from einops.layers.torch import Rearrange
 from module import Attention, PreNorm, FeedForward
 import numpy as np
 
+# from https://github.com/rishikksh20/ViViT-pytorch 
+
 class Transformer(nn.Module):
     def __init__(self, dim, depth, heads, dim_head, mlp_dim, dropout = 0.):
         super().__init__()
         self.layers = nn.ModuleList([])
         self.norm = nn.LayerNorm(dim)
-        for _ in range(depth):
+        for _ in range(depth): # depth에 따라 Attention, FFN 몇 번 진행할지
             self.layers.append(nn.ModuleList([
                 PreNorm(dim, Attention(dim, heads = heads, dim_head = dim_head, dropout = dropout)), #  Normalization 먼저 하고, Attention 진행
                 PreNorm(dim, FeedForward(dim, mlp_dim, dropout = dropout)) #  Normalization 먼저 하고, MLP 진행
@@ -37,7 +39,7 @@ class ViViT(nn.Module):
         num_patches = (image_size // patch_size) ** 2 # image도 정사각형, Patch도 정사각형
         patch_dim = in_channels * patch_size ** 2 # patch가 채널 개수만큼 있겠지
         self.to_patch_embedding = nn.Sequential( 
-            Rearrange('b t c (h p1) (w p2) -> b t (h w) (p1 p2 c)', p1 = patch_size, p2 = patch_size), # 어떤 수 5개가 곱해진 dimension을 이런 식으로 변형한다. 결국에는 어떤 수 4개가 곱해지도록 ?!
+            Rearrange('b t c (h p1) (w p2) -> b t (h w) (p1 p2 c)', p1 = patch_size, p2 = patch_size), # 어떤 수 5개가 곱해진 dimension을 이런 식으로 변형한다. 결국에는 어떤 수 4개가 곱해지도록
             # b : 비디오 수 / t : 프레임 수 / c : 채널 수 (RGB : 3개) 
             nn.Linear(patch_dim, dim),
         )
@@ -45,9 +47,11 @@ class ViViT(nn.Module):
         self.pos_embedding = nn.Parameter(torch.randn(1, num_frames, num_patches + 1, dim)) # 각 프레임에서의 패치 수. +1은 For CLS token
         # nn.Parameter 로 감싸진 텐서는 모델의 학습 과정에서 자동으로 최적화
         self.space_token = nn.Parameter(torch.randn(1, 1, dim)) 
+        # 공간적 처리를 위한 CLS 토큰. dim = 토큰 임베딩의 차원, 트랜스포머 입력 차원과 일치
         self.space_transformer = Transformer(dim, depth, heads, dim_head, dim*scale_dim, dropout)
 
         self.temporal_token = nn.Parameter(torch.randn(1, 1, dim))
+        # 시간적 처리를 위한 CLS 토큰. 
         self.temporal_transformer = Transformer(dim, depth, heads, dim_head, dim*scale_dim, dropout)
 
         self.dropout = nn.Dropout(emb_dropout)
@@ -60,10 +64,13 @@ class ViViT(nn.Module):
 
     def forward(self, x):
         x = self.to_patch_embedding(x)
-        b, t, n, _ = x.shape
+        b, t, n, _ = x.shape 
+        # 배치 개수 / 프레임 개수 / 패치 개수 / 패치 길이 * 패치 길이 * 채널 수 (디멘션)
 
-        cls_space_tokens = repeat(self.space_token, '() n d -> b t n d', b = b, t=t)
+        cls_space_tokens = repeat(self.space_token, '() n d -> b t n d', b=b, t=t)
+        # cls_space_tokens의 shape는 (batch_size, time_frames, 1, patch_embedding_dim)
         x = torch.cat((cls_space_tokens, x), dim=2)
+        # x의 shape는 (batch_size, time_frames, num_patches + 1, patch_embedding_dim)
         x += self.pos_embedding[:, :, :(n + 1)]
         x = self.dropout(x)
 

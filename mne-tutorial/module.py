@@ -5,6 +5,8 @@ import torch.nn.functional as F
 from einops import rearrange, repeat
 from einops.layers.torch import Rearrange
 
+# from https://github.com/rishikksh20/ViViT-pytorch 
+
 class Residual(nn.Module):
     def __init__(self, fn):
         super().__init__()
@@ -49,7 +51,7 @@ class Attention(nn.Module):
             nn.Dropout(dropout)
         ) if project_out else nn.Identity()
 
-    def forward(self, x):
+    def forward(self, x): # 어텐션 값 구하는 식 구현
         b, n, _, h = *x.shape, self.heads
         qkv = self.to_qkv(x).chunk(3, dim = -1)
         q, k, v = map(lambda t: rearrange(t, 'b n (h d) -> b h n d', h = h), qkv)
