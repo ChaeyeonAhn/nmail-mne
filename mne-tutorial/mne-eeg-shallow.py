@@ -59,7 +59,7 @@ def EEG_array_modifier(eeg_array, label_array):
     events_array = np.array([[event_timepoints[i], 0, y[i]] for i in range(len(y))])
     return np.array(X), events_array
 
-def EEG_to_epochs(eeg_array, label_array, sfreq = 500, event_id = {'Rest': 0, 'RightHand': 1, 'LeftHand': 2, 'Feet': 3}):
+def EEG_to_epochs(eeg_array, label_array, sfreq = 500, event_id = {'Rest': 0, 'Collect': 1, 'Disperse': 2, 'Side': 3}):
     # 우리가 꽂아서 사용한 채널(전극) 이름
     channels = ['F5', 'FC5', 'C5', 'CP5', 'P5', 'FC3', 'C3', 'CP3', 'P3', 'F1', 'FC1', 'C1', 'CP1', 'P1', 'Cz', 'CPz', 'Pz', 'F2', 'FC2', 'C2', 'CP2', 'P2', 'FC4', 'C4', 'CP4', 'P4', 'F6', 'FC6', 'C6', 'CP6', 'P6']
     n_channels = len(channels)
@@ -86,7 +86,7 @@ def apply_notch_filter(data, sfreq, freq=60.0, quality_factor=30.0):
 
 # print(os.getcwd())
 
-EEG_array, label_array = import_EEG('[CYA]MI_four_5.txt') # 파일 읽어들이기
+EEG_array, label_array = import_EEG('[CYA]VI_01.txt') # 파일 읽어들이기
 new_epoch = EEG_to_epochs(EEG_array, label_array) # 에폭 어레이 형성
 # fig = new_epoch.plot(n_epochs=1, scalings = {"eeg": 500}, show=True, n_channels=32, event_color=dict({-1: "blue", 1: "red", 2: "yellow", 3: "green"})) # 기본적인 EEG 데이터 열람
 # # 이벤트별로 온셋 타이밍 색깔로 보고 싶은데 코드가 적용이 안 되나 봄
@@ -138,7 +138,7 @@ highpass = new_epoch.filter(l_freq=cutoff, h_freq=None)
 # compute_psd returns EpochSpectrum
 # average : averages over channels
 # amplitude : False thus Power spectrum (Amplitude spectrum if True)
-fig = new_epoch.compute_psd(fmax=250, method="welch", n_fft=4096).plot(
+fig = new_epoch.compute_psd(fmax=250, method="welch", n_fft=2000).plot(
     average=True, amplitude=False, exclude="bads"
 )
 
@@ -203,7 +203,7 @@ for channel_type, ratio in explained_var_ratio.items():
 # ica.plot_sources(new_epoch, show_scrollbars=False)
 
 # 이 플롯이 각각의 독립 성분의 특성을 다양하게 나타내주므로, 여기서 어떤 것이 노이즈인지를 파악한다. 
-ica.plot_properties(new_epoch, picks=[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14])
+# ica.plot_properties(new_epoch, picks=[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14])
 
 # 어떤 독립 성분을 뺄지 정했으면, ica에 빼는 것으로 등록함
 ica.exclude = [1]
@@ -239,12 +239,13 @@ ch_types = ['eeg'] * n_channels
 montage = mne.channels.make_standard_montage('standard_1020')
 info = mne.create_info(ch_names=channels, sfreq=500, ch_types=ch_types)
 info = info.set_montage(montage) # 설정한 montage 사용
-# 여기 피드 되는 두 개 array는 import_EEG에서 나온 친구들
-data1, events = EEG_array_modifier(EEG_array, label_array)
-event_id = {'Rest': 0, 'RightHand': 1, 'LeftHand': 2, 'Feet': 3}
 
-normstan_epoch = mne.EpochsArray(data1, info, events, tmin=0, event_id=event_id)
-normstan_epoch.plot(n_epochs=1, scalings = {"eeg": 500}, show=True, n_channels=32)
+# 여기 피드 되는 두 개 array는 import_EEG에서 나온 친구들
+# data1, events = EEG_array_modifier(EEG_array, label_array)
+# event_id = {'Rest': 0, 'RightHand': 1, 'LeftHand': 2, 'Feet': 3}
+
+# normstan_epoch = mne.EpochsArray(data1, info, events, tmin=0, event_id=event_id)
+# normstan_epoch.plot(n_epochs=1, scalings = {"eeg": 500}, show=True, n_channels=32)
 #####################################
 
 # Randomly split the data
@@ -268,7 +269,7 @@ class ShallowConvNet(nn.Module):
             num_channels,  # number of channels
             output_dim=4,
             dropout_prob=0.3,
-            last_size=2440
+            last_size=1880
     ):
         super(ShallowConvNet, self).__init__()
 
@@ -301,7 +302,7 @@ class ShallowConvNet(nn.Module):
 
         # self.conv_class = nn.Conv2d(200,2,kernel_size=(1,9))
         self.flatten = nn.Flatten()
-        self.fc = nn.Linear(last_size, output_dim)  # input length 500->1080, 750->1760, 1000->2440, 1125 -> 2760
+        self.fc = nn.Linear(1880, output_dim)  # input length 500->1080, 750->1760, 1000->2440, 1125 -> 2760
         # self.softmax = nn.LogSoftmax(dim=1)
         # 로소맥을 마지막에 쓰지 않는 이유는 
         # 이미 loss function (CrossEntropyLoss가 LogSoftMax를 안에 포함하고 있기 때문)
@@ -323,7 +324,6 @@ class ShallowConvNet(nn.Module):
         x = self.dropout1(x) # 특정 확률로 랜덤하게 채널 비활성화
 
         x = self.flatten(x)
-        # print(x.shape)
         output = self.fc(x)
         # print(output.shape) # (8, 4) 배치 당 네 개 인듯,,
         return output
